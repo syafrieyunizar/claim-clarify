@@ -1,0 +1,31 @@
+{
+    "name":  "claim-clarify",
+    "version":  "1.0.4",
+    "private":  true,
+    "type":  "module",
+    "scripts":  {
+                    "dev":  "vite",
+                    "build":  "tsc --noEmit \u0026\u0026 vite build",
+                    "test":  "vitest run",
+                    "package:extension":  "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-extension.ps1"
+                },
+    "dependencies":  {
+                         "@crxjs/vite-plugin":  "^2.2.0",
+                         "@vitejs/plugin-react":  "^5.0.0",
+                         "lucide-react":  "^0.468.0",
+                         "pdfjs-dist":  "^4.10.38",
+                         "react":  "^18.3.1",
+                         "react-dom":  "^18.3.1",
+                         "vite":  "^6.0.0"
+                     },
+    "devDependencies":  {
+                            "@types/chrome":  "^0.0.287",
+                            "@types/react":  "^18.3.18",
+                            "@types/react-dom":  "^18.3.5",
+                            "typescript":  "^5.7.2",
+                            "vitest":  "^2.1.8",
+                            "autoprefixer":  "^10.4.20",
+                            "postcss":  "^8.4.49",
+                            "tailwindcss":  "^3.4.17"
+                        }
+}

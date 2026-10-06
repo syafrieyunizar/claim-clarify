@@ -1,0 +1,11 @@
+export const INK = "#132A3A";
+export const PAPER = "#FAFAF8";
+export const MIST = "#E7ECEE";
+export const MIST_DARK = "#D7DEE1";
+export const TEAL = "#146B64";
+export const TEAL_SOFT = "#E3EEEC";
+export const PLUM = "#7A4B5E";
+export const PLUM_SOFT = "#F1E7EB";
+export const AMBER = "#B5722A";
+export const AMBER_SOFT = "#F6EBDD";
+export const SLATE = "#5B6B76";

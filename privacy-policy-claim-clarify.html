@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Kebijakan Privasi Claim Clarify</title>
+  <meta name="description" content="Kebijakan privasi ekstensi Chrome Claim Clarify.">
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17252a;
+      --muted: #5c6b70;
+      --line: #dce4e5;
+      --paper: #ffffff;
+      --mist: #f2f5f5;
+      --teal: #157a70;
+      --teal-soft: #e5f2f0;
+      --plum: #8f002d;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--mist);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: var(--paper);
+    }
+
+    .header-inner,
+    main,
+    footer {
+      width: min(100% - 32px, 780px);
+      margin-inline: auto;
+    }
+
+    .header-inner {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-height: 84px;
+    }
+
+    .logo {
+      width: 48px;
+      height: 48px;
+      border-radius: 8px;
+    }
+
+    .brand {
+      margin: 0;
+      font-size: 1.05rem;
+      line-height: 1.25;
+    }
+
+    .byline {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    main {
+      padding-block: 52px 64px;
+    }
+
+    h1,
+    h2 {
+      letter-spacing: 0;
+      line-height: 1.25;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 8vw, 3.25rem);
+    }
+
+    h2 {
+      margin: 42px 0 12px;
+      font-size: 1.2rem;
+    }
+
+    p,
+    li { color: var(--muted); }
+
+    ul { padding-left: 22px; }
+
+    li + li { margin-top: 8px; }
+
+    a {
+      color: var(--teal);
+      text-underline-offset: 3px;
+    }
+
+    .updated {
+      margin: 12px 0 28px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .summary {
+      margin: 0;
+      border-left: 4px solid var(--teal);
+      background: var(--teal-soft);
+      padding: 18px 20px;
+      color: var(--ink);
+    }
+
+    strong { color: var(--ink); }
+
+    footer {
+      border-top: 1px solid var(--line);
+      padding-block: 24px 36px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    @media (max-width: 520px) {
+      .header-inner,
+      main,
+      footer { width: min(100% - 24px, 780px); }
+      main { padding-block: 36px 52px; }
+      h2 { margin-top: 34px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <img class="logo" src="public/icons/icon128.png" alt="Logo Claim Clarify" width="48" height="48">
+      <div>
+        <p class="brand"><strong>Claim Clarify</strong></p>
+        <p class="byline">by Syafrie Yunizar</p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <h1>Kebijakan Privasi</h1>
+    <p class="updated">Terakhir diperbarui: 12 Agustus 2026</p>
+
+    <p class="summary">Claim Clarify membantu pengguna menyusun draf jawaban pending klaim BPJS dari dokumen yang dipilih pengguna. Dokumen diproses dan disensor secara lokal terlebih dahulu. Hanya teks yang telah melalui penyensoran otomatis yang dikirim ke layanan AI ketika pengguna meminta analisis.</p>
+
+    <h2>1. Ruang lingkup</h2>
+    <p>Kebijakan ini berlaku untuk ekstensi Chrome Claim Clarify. Dengan menggunakan fitur pemrosesan dokumen atau AI, pengguna memahami bahwa data yang dipilih akan ditangani sebagaimana dijelaskan di halaman ini.</p>
+
+    <h2>2. Data yang ditangani</h2>
+    <ul>
+      <li><strong>Isi dokumen dan informasi kesehatan:</strong> teks dari PDF yang diunggah, tautan PDF, atau PDF pada tab aktif yang dipilih pengguna, termasuk diagnosis, tindakan, hasil pemeriksaan, dan informasi klinis lain.</li>
+      <li><strong>Data identitas yang mungkin terdapat pada dokumen:</strong> antara lain nama pasien, NIK, nomor SEP, nomor rekam medis, nomor kartu, tanggal lahir, alamat, nomor telepon, serta identitas fasilitas kesehatan.</li>
+      <li><strong>Masukan dan hasil kerja:</strong> alasan pending, alasan tambahan pengguna, jawaban yang dihasilkan, template, knowledge, draf kasus, dan riwayat kasus.</li>
+      <li><strong>Data autentikasi dan konfigurasi:</strong> username, password, token sesi akses admin, endpoint, model AI, dan API key pribadi yang dimasukkan pengguna.</li>
+      <li><strong>Metadata pemakaian mode admin:</strong> username, provider, model, status keberhasilan, durasi permintaan, serta jumlah karakter input dan output. Log ini tidak menyimpan isi prompt atau jawaban AI.</li>
+    </ul>
+
+    <h2>3. Pemrosesan dan penyensoran lokal</h2>
+    <p>Ekstraksi teks PDF dan penyensoran identitas dilakukan pada perangkat pengguna sebelum permintaan AI dibuat. Claim Clarify dirancang untuk mengganti pola identitas yang dikenali, termasuk nama pasien, NIK, nomor SEP, nomor rekam medis, nomor kartu, tanggal lahir, alamat, nomor telepon, dan nama fasilitas kesehatan.</p>
+    <p>Penyensoran otomatis tidak dapat dijamin mengenali setiap format atau kesalahan penulisan. Pengguna tetap bertanggung jawab meninjau dokumen dan hasil penyensoran sebelum menggunakan layanan AI. Informasi klinis yang telah dideidentifikasi tetap dipakai karena diperlukan untuk menghasilkan analisis klaim.</p>
+
+    <h2>4. Penyimpanan lokal</h2>
+    <p>Pengaturan, API key pribadi, template lokal, knowledge lokal, draf, hasil, dan riwayat kasus disimpan melalui <code>chrome.storage.local</code> pada perangkat pengguna. Data tersebut tidak disinkronkan melalui <code>chrome.storage.sync</code>. Data dapat dihapus dari antarmuka ekstensi, dengan menghapus data extension melalui Chrome, atau dengan menghapus extension.</p>
+
+    <h2>5. Data yang dikirim dan tujuannya</h2>
+    <ul>
+      <li><strong>Provider AI yang dipilih pengguna:</strong> teks klinis yang telah melalui penyensoran, alasan pending, instruksi, knowledge relevan, dan jawaban sebelumnya dikirim hanya ketika pengguna meminta pembuatan, revisi, atau penilaian jawaban.</li>
+      <li><strong>Supabase Claim Clarify:</strong> digunakan untuk autentikasi akun admin, token sesi, library knowledge/template bersama, pengajuan knowledge/template untuk moderasi, metadata pemakaian, dan relay permintaan AI dalam mode API admin.</li>
+      <li><strong>Library bersama:</strong> knowledge atau template lokal hanya dikirim untuk moderasi setelah tindakan eksplisit pengguna. Konten yang disetujui pemilik dapat dibagikan kepada akun Claim Clarify lain.</li>
+    </ul>
+    <p>Claim Clarify tidak menjual data pengguna, tidak menggunakan data untuk periklanan, tidak menentukan kelayakan kredit, dan tidak menggunakan data untuk tujuan di luar penyusunan serta evaluasi jawaban pending klaim.</p>
+
+    <h2>6. Pihak penerima data</h2>
+    <p>Data dapat diproses oleh Supabase dan oleh provider AI yang dikonfigurasi untuk menyediakan fungsi yang diminta pengguna. Pada mode API pribadi, API key dikirim hanya kepada endpoint AI yang dipilih pengguna. Pada mode admin, API key pusat tidak disimpan di extension dan permintaan diteruskan melalui Supabase Edge Function ke provider AI aktif. Kebijakan dan masa simpan provider tersebut dapat berlaku terhadap data yang diterimanya.</p>
+
+    <h2>7. Izin Chrome</h2>
+    <ul>
+      <li><strong>sidePanel:</strong> menampilkan antarmuka Claim Clarify di sisi browser.</li>
+      <li><strong>storage:</strong> menyimpan pengaturan dan data kerja secara lokal.</li>
+      <li><strong>activeTab dan tabs:</strong> mengenali serta membaca PDF pada tab aktif, atau mengoordinasikan halaman e-Klaim selama otomatisasi yang dimulai pengguna.</li>
+      <li><strong>scripting:</strong> mengisi SEP dan menekan kontrol Re-grouping hanya pada tab e-Klaim aktif setelah tindakan eksplisit pengguna.</li>
+      <li><strong>file:///*:</strong> membaca PDF lokal yang dipilih pada tab aktif setelah pengguna mengaktifkan izin akses file.</li>
+      <li><strong>Izin host opsional:</strong> mengunduh PDF dari tautan yang dimasukkan pengguna, menghubungi endpoint AI yang dipilih pengguna, atau menjalankan Re-grouping pada origin e-Klaim aktif.</li>
+    </ul>
+    <p>Claim Clarify tidak mengumpulkan riwayat penelusuran dan tidak memantau klik, posisi mouse, ketikan, atau aktivitas browser pengguna.</p>
+
+    <h2>8. Keamanan</h2>
+    <p>Claim Clarify membatasi akses data pada fitur yang diminta pengguna, tidak mencatat API key atau isi rekam medis ke console, dan menggunakan koneksi HTTPS untuk layanan Supabase serta endpoint bawaan. Pengguna harus memilih endpoint AI yang aman dan tepercaya.</p>
+
+    <h2>9. Retensi dan penghapusan</h2>
+    <p>Data lokal disimpan sampai pengguna menghapusnya. Pengajuan knowledge/template dan data akun admin dapat tersimpan di Supabase selama diperlukan untuk menyediakan library dan akses layanan. Permintaan penghapusan data layanan dapat diajukan melalui kontak di bawah.</p>
+
+    <h2>10. Limited Use</h2>
+    <p>Penggunaan informasi yang diterima melalui API Chrome mematuhi Chrome Web Store User Data Policy, termasuk persyaratan Limited Use. Data hanya digunakan untuk menyediakan atau meningkatkan fungsi tunggal Claim Clarify sebagaimana dijelaskan dalam kebijakan ini.</p>
+
+    <h2>11. Perubahan kebijakan</h2>
+    <p>Kebijakan ini dapat diperbarui apabila fitur atau praktik pengelolaan data berubah. Tanggal pembaruan akan dicantumkan di bagian atas halaman.</p>
+
+    <h2>12. Kontak</h2>
+    <p>Pengembang: Syafrie Yunizar. Pertanyaan privasi atau permintaan penghapusan data dapat disampaikan melalui <a href="https://github.com/syafrieyunizar">profil GitHub pengembang</a> atau kanal dukungan pada listing Claim Clarify di Chrome Web Store.</p>
+  </main>
+
+  <footer>
+    &copy; 2026 Syafrie Yunizar. Claim Clarify.
+  </footer>
+</body>
+</html>
