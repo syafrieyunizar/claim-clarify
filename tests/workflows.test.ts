@@ -98,6 +98,28 @@ describe("workflow guards", () => {
     expect(buildStrictTemplateSystemPrompt(template)).toContain("Jumlah fills wajib tepat 1");
   });
 
+  it("keeps strict template guidance clinically aligned with the standard prompt", () => {
+    const template = "Ketentuan regulasi tetap. Pasien..... (Jelaskan kondisi pasien dan kebutuhan rawat inap)";
+    const prompt = buildStrictTemplateSystemPrompt(template);
+    const sharedRules = [
+      "Alasan pending BPJS menentukan fokus",
+      "Rekam medis menjadi sumber fakta klinis",
+      "Knowledge lokal",
+      "5-7 kalimat, maksimal 130 kata",
+      "rawat jalan atau di FKTP",
+      'Gunakan "mendukung diagnosis"',
+      "Kami berkeberatan",
+      "nomor SEP",
+    ];
+    sharedRules.forEach((rule) => {
+      expect(STANDARD_SYSTEM_PROMPT).toContain(rule);
+      expect(prompt).toContain(rule);
+    });
+    expect(prompt).toContain("Jangan mengulang kriteria, regulasi, diagnosis, atau kalimat yang sudah tercantum pada teks tetap.");
+    expect(prompt).toContain('bukan dengan mengulang kata "Pasien"');
+    expect(prompt).not.toContain('"jawabanPending"');
+  });
+
   it("flags likely readmisi from repeated patient markers", () => {
     const result = analyzeReadmisiTexts([
       "No RM: 123 Nama Pasien: Budi Diagnosis: CHF",
