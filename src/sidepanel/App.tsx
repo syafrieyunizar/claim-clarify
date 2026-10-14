@@ -965,7 +965,7 @@ function SettingsView({ aiConfig, setAiConfig, settingsTab, setSettingsTab, temp
 }
 
 function createEmptyManualChunk(): KnowledgeChunk {
-  return { id: crypto.randomUUID(), title: "", source: "Manual", keywords: [], content: "", active: true };
+  return { id: crypto.randomUUID(), title: "", source: "", keywords: [], content: "", active: true };
 }
 
 function LibraryScopeTabs({ active, mineLabel, sharedLabel, onChange }: { active: "mine" | "shared"; mineLabel: string; sharedLabel: string; onChange: (tab: "mine" | "shared") => void }) {
@@ -1148,7 +1148,7 @@ function KnowledgeChunkEditor({ chunk, onChange, onRemove }: { chunk: KnowledgeC
     onChange({ keywords: parseKnowledgeKeywords(value) });
   }
 
-  return <div className="rounded-lg p-2.5 space-y-2" style={{ backgroundColor: MIST }}><div className="flex items-center gap-2"><input value={chunk.title} onChange={(event) => onChange({ title: event.target.value })} className="flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold outline-none" style={{ color: INK }} placeholder="Judul chunk" /><label className="flex items-center gap-1 text-[10px]" style={{ color: SLATE }}><input type="checkbox" checked={chunk.active} onChange={(event) => onChange({ active: event.target.checked })} />Aktif</label><button aria-label="Hapus chunk" onClick={onRemove}><Trash2 size={13} color={SLATE} /></button></div><input value={chunk.source} onChange={(event) => onChange({ source: event.target.value })} className="w-full rounded-md px-2 py-1.5 text-[10.5px] outline-none" style={{ color: INK }} placeholder="Sumber/bab" /><textarea value={keywordText} onChange={(event) => updateKeywords(event.target.value)} rows={2} className="w-full rounded-md px-2 py-1.5 text-[10.5px] outline-none resize-none" style={{ color: INK }} placeholder="Keyword, pisahkan dengan koma / titik koma / baris baru" /><textarea value={chunk.content} onChange={(event) => onChange({ content: event.target.value })} rows={4} className="w-full rounded-md px-2 py-1.5 text-[11px] outline-none resize-none" style={{ color: INK }} placeholder="Isi knowledge" /></div>;
+  return <div className="rounded-lg p-2.5 space-y-2" style={{ backgroundColor: MIST }}><div className="flex items-center gap-2"><input value={chunk.title} onChange={(event) => onChange({ title: event.target.value })} className="flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold outline-none" style={{ color: INK }} placeholder="Judul chunk" /><label className="flex items-center gap-1 text-[10px]" style={{ color: SLATE }}><input type="checkbox" checked={chunk.active} onChange={(event) => onChange({ active: event.target.checked })} />Aktif</label><button aria-label="Hapus chunk" onClick={onRemove}><Trash2 size={13} color={SLATE} /></button></div><input value={chunk.source} onChange={(event) => onChange({ source: event.target.value })} className="w-full rounded-md px-2 py-1.5 text-[10.5px] outline-none" style={{ color: INK }} placeholder="Nama dokumen/sumber resmi (opsional)" /><textarea value={keywordText} onChange={(event) => updateKeywords(event.target.value)} rows={2} className="w-full rounded-md px-2 py-1.5 text-[10.5px] outline-none resize-none" style={{ color: INK }} placeholder="Keyword, pisahkan dengan koma / titik koma / baris baru" /><textarea value={chunk.content} onChange={(event) => onChange({ content: event.target.value })} rows={4} className="w-full rounded-md px-2 py-1.5 text-[11px] outline-none resize-none" style={{ color: INK }} placeholder="Isi knowledge" /></div>;
 }
 
 function parseKnowledgeKeywords(value: string) {

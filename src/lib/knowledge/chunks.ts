@@ -3,6 +3,7 @@ import { extractJsonValue } from "../ai/json";
 import { redactSensitiveData } from "../privacy/redact";
 
 const IGNORED_KEYWORDS = new Set(["bpjs", "jkn", "kasus", "klaim", "pasien", "rekam medis", "rumah sakit"]);
+const GENERIC_KNOWLEDGE_SOURCES = new Set(["manual", "knowledge manual", "input manual"]);
 
 export const KNOWLEDGE_CHUNK_SYSTEM_PROMPT = `Anda membantu menyusun knowledge base klaim BPJS. Pecah dokumen menjadi chunk berdasarkan bab, subbab, topik klinis, indikasi, kriteria, angka penting, pengecualian, atau aturan klaim. Jangan membuat aturan baru. Pertahankan angka, batas nilai, durasi, diagnosis, kode, syarat, dan pengecualian apa adanya. Balas hanya JSON valid: {"chunks":[{"title":"...","source":"...","keywords":["..."],"content":"..."}]}. Tiap chunk harus punya 3-8 keyword yang bisa dipakai untuk mencari kasus terkait.`;
 
@@ -47,8 +48,13 @@ export function retrieveKnowledgeChunks(chunks: KnowledgeChunk[], query: string,
 
 export function formatKnowledgeContext(chunks: KnowledgeChunk[]) {
   return `Knowledge lokal relevan:\n${chunks
-    .map((chunk, index) => `${index + 1}. ${chunk.title}\nSumber: ${chunk.source}\nKeyword: ${chunk.keywords.join(", ")}\nIsi: ${chunk.content}`)
+    .map((chunk, index) => `${index + 1}. Judul: ${chunk.title}${isMeaningfulKnowledgeSource(chunk.source) ? `\nSumber dokumen: ${chunk.source}` : ""}\nIsi knowledge: ${chunk.content}`)
     .join("\n\n")}`;
+}
+
+export function isMeaningfulKnowledgeSource(source: unknown) {
+  const normalized = String(source ?? "").trim().toLocaleLowerCase("id-ID");
+  return Boolean(normalized && !GENERIC_KNOWLEDGE_SOURCES.has(normalized));
 }
 
 function scoreChunk(chunk: KnowledgeChunk, normalizedQuery: string) {

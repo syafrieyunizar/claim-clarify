@@ -1,5 +1,6 @@
 import type { ClaimChallengeAssessment, GeneratedAnswer } from "../types";
 import { extractJsonValue } from "../lib/ai/json";
+import { isMeaningfulKnowledgeSource } from "../lib/knowledge/chunks";
 import { redactSensitiveData } from "../lib/privacy/redact";
 
 export const GENERATED_ANSWER_SCHEMA = {
@@ -21,9 +22,10 @@ Jawab alasan pending secara langsung dengan bukti klinis paling relevan dari rek
 [PRIORITAS SUMBER]
 1. Alasan pending BPJS menentukan fokus jawaban.
 2. Rekam medis menjadi sumber fakta klinis.
-3. Knowledge lokal hanya menjadi dasar aturan bila benar-benar disertakan dalam konteks dan berkaitan langsung dengan alasan pending.
+3. Isi knowledge lokal hanya menjadi dasar aturan bila benar-benar disertakan dalam konteks dan berkaitan langsung dengan alasan pending. Judul dan sumber hanyalah metadata, bukan isi ketentuan.
 4. Bantuan alasan pengguna adalah arah argumentasi, bukan fakta baru.
 Jangan membuat fakta, diagnosis, hasil pemeriksaan, tanggal, terapi, atau regulasi yang tidak tersedia pada sumber tersebut.
+Label generik seperti "Manual", "Knowledge manual", atau "Input manual" bukan nama regulasi dan tidak boleh disebut sebagai sumber.
 
 [PROSES INTERNAL — JANGAN DITULIS]
 1. Identifikasi satu pokok alasan pending.
@@ -37,10 +39,10 @@ Balas hanya JSON valid tanpa markdown atau teks pembuka dengan bentuk persis:
 {"ringkasan":"...","jawabanPending":"...","sources":["..."]}
 - ringkasan: 1-2 kalimat faktual, maksimal 60 kata, berisi kondisi utama dan pokok pending.
 - jawabanPending: satu paragraf, 5-7 kalimat, maksimal 130 kata, tanpa bullet atau numbering.
-- sources: hanya nama knowledge/regulasi yang benar-benar digunakan; gunakan [] bila tidak ada.
+- sources: hanya nama dokumen atau regulasi spesifik yang benar-benar digunakan; jangan masukkan label generik seperti "Manual"; gunakan [] bila tidak ada nama sumber spesifik.
 
 [URUTAN JAWABAN PENDING]
-1. Jika knowledge lokal relevan tersedia, mulai dengan kriteria diagnosis, indikasi, atau ketentuan yang paling langsung menjawab pending beserta nama sumbernya.
+1. Jika knowledge lokal relevan tersedia, mulai dengan kriteria diagnosis, indikasi, atau ketentuan yang paling langsung menjawab pending. Sebutkan nama sumber hanya jika metadata atau isi knowledge memuat nama dokumen atau regulasi yang spesifik.
 2. Uraikan kondisi, gejala, dan temuan objektif utama yang memenuhi kriteria tersebut.
 3. Sebutkan hasil penunjang yang relevan dan maknanya secara proporsional.
 4. Jelaskan terapi atau tindakan penting yang membuktikan kebutuhan tingkat pelayanan.
@@ -67,6 +69,7 @@ Balas hanya JSON valid tanpa markdown atau teks pembuka dengan bentuk persis:
 [LARANGAN]
 - Jangan merinci seluruh tanda vital, administrasi, nama ruang, nama DPJP, pemeriksaan, atau obat bila tidak langsung memperkuat jawaban.
 - Jangan menyebut bahwa knowledge atau regulasi tidak tersedia; cukup gunakan dasar klinis yang ada.
+- Jangan menulis "sesuai Manual" atau menjadikan cara input knowledge sebagai nama sumber.
 - Jangan memakai heading, bullet, numbering, bahasa promosi, atau tanda "-" sebagai pemisah kalimat dalam jawabanPending.
 - Jangan mencantumkan atau merekonstruksi nama pasien, nomor SEP, nomor RM, tanggal lahir, alamat, nomor kartu, atau identitas lain yang telah disensor.`;
 
@@ -149,7 +152,7 @@ function parseJsonAnswer(text: string): GeneratedAnswer | null {
     return {
       ringkasan: String(parsed.ringkasan ?? "").trim(),
       jawabanPending: normalizePendingParagraph(String(parsed.jawabanPending ?? "")),
-      sources: Array.isArray(parsed.sources) ? parsed.sources.map(String) : [],
+      sources: cleanGeneratedSources(parsed.sources),
     };
   } catch {
     return null;
@@ -172,6 +175,12 @@ export function normalizePendingParagraph(text: string) {
     const clean = line.replace(/^\s*(?:[-*\u2022]|\d+[.)]|#{1,6})\s+/, "").trim();
     return isListItem && clean && !/[.!?;:]$/.test(clean) ? `${clean}.` : clean;
   }).filter(Boolean).join(" ").replace(/\s{2,}/g, " ").trim();
+}
+
+export function cleanGeneratedSources(value: unknown) {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .map((source) => String(source).trim())
+    .filter(isMeaningfulKnowledgeSource))];
 }
 
 function compactParagraph(text: string) {

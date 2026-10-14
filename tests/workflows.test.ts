@@ -5,7 +5,7 @@ import { aiHttpError, prepareAiEndpoint } from "../src/lib/ai/http";
 import { getProvider } from "../src/lib/ai/provider";
 import { getAdminProviderLabel, listClaimLibrary, manageClaimLibraryItem, normalizeAdminProviderKey, reviewClaimLibraryItem } from "../src/lib/ai/admin";
 import { appendAuditEntry, listAuditEntries, removeAuditEntry, replaceAuditEntries } from "../src/lib/audit/log";
-import { buildKnowledgeChunkUserMessage, parseKnowledgeChunks, retrieveKnowledgeChunks } from "../src/lib/knowledge/chunks";
+import { buildKnowledgeChunkUserMessage, formatKnowledgeContext, parseKnowledgeChunks, retrieveKnowledgeChunks } from "../src/lib/knowledge/chunks";
 import { parseSepInput } from "../src/lib/eklaim/regrouping";
 import { captureActiveTabPdf, readLocalFileUrl } from "../src/lib/pdf/parse";
 import { analyzeReadmisiTexts } from "../src/workflows/readmisi";
@@ -21,6 +21,7 @@ describe("workflow guards", () => {
     expect(STANDARD_SYSTEM_PROMPT).toContain("[POLA JAWABAN DEFAULT]");
     expect(STANDARD_SYSTEM_PROMPT).toContain("ketentuan atau kriteria → bukti klinis pasien → terapi yang dibutuhkan");
     expect(STANDARD_SYSTEM_PROMPT).toContain('Gunakan "mendukung diagnosis"');
+    expect(STANDARD_SYSTEM_PROMPT).toContain('Label generik seperti "Manual"');
     expect(STANDARD_SYSTEM_PROMPT).toContain("[CONTOH POLA — JANGAN SALIN FAKTANYA]");
     expect(GENERATED_ANSWER_SCHEMA.properties.jawabanPending.description).toContain("maksimal 130 kata");
   });
@@ -104,7 +105,7 @@ describe("workflow guards", () => {
     const sharedRules = [
       "Alasan pending BPJS menentukan fokus",
       "Rekam medis menjadi sumber fakta klinis",
-      "Knowledge lokal",
+      "knowledge lokal",
       "rawat jalan atau di FKTP",
       'Gunakan "mendukung diagnosis"',
       "Kami berkeberatan",
@@ -117,6 +118,7 @@ describe("workflow guards", () => {
     expect(prompt).toContain("1-5 kalimat, maksimal 130 kata");
     expect(prompt).toContain("Placeholder data singkat seperti nomor poin, jumlah hari, tanggal, atau kode harus tetap singkat");
     expect(prompt).toContain("hanya berlaku untuk placeholder yang meminta narasi klinis");
+    expect(prompt).toContain('Label generik seperti "Manual"');
     expect(prompt).toContain("Jangan mengulang kriteria, regulasi, diagnosis, atau kalimat yang sudah tercantum pada teks tetap.");
     expect(prompt).toContain('bukan dengan mengulang kata "Pasien"');
     expect(prompt).not.toContain('"jawabanPending"');
@@ -176,6 +178,19 @@ describe("workflow guards", () => {
     expect(retrieveKnowledgeChunks(chunks, query).map((chunk) => chunk.id)).toEqual(["target"]);
   });
 
+  it("sends manual knowledge content without presenting Manual as a source", () => {
+    const context = formatKnowledgeContext([{ id: "manual", title: "Kriteria Rawat Inap", source: "Manual", keywords: ["rawat inap"], content: "Pasien memerlukan terapi parenteral.", active: true }]);
+    expect(context).toContain("Judul: Kriteria Rawat Inap");
+    expect(context).toContain("Isi knowledge: Pasien memerlukan terapi parenteral.");
+    expect(context).not.toContain("Sumber dokumen: Manual");
+    expect(context).not.toContain("Keyword:");
+  });
+
+  it("keeps a specific document name as knowledge source", () => {
+    const context = formatKnowledgeContext([{ id: "official", title: "Kriteria IGD", source: "BA Kesepakatan No. 1247/BA/1124", keywords: ["igd"], content: "Kriteria kegawatdaruratan.", active: true }]);
+    expect(context).toContain("Sumber dokumen: BA Kesepakatan No. 1247/BA/1124");
+  });
+
   it("accepts knowledge JSON followed by model text", () => {
     const chunks = parseKnowledgeChunks('{"chunks":[{"title":"Anemia","source":"PPK","keywords":["anemia"],"content":"Kriteria anemia."}]}\nCatatan tambahan.', "fallback");
     expect(chunks).toHaveLength(1);
@@ -185,6 +200,11 @@ describe("workflow guards", () => {
   it("removes common identity markers from generated answer", () => {
     const parsed = parseGeneratedAnswer(JSON.stringify({ ringkasan: "atas nama Budi SEP 123", jawabanPending: "Klaim atas nama Budi (SEP 1709R0090526V002855) layak dibayar.", sources: [] }));
     expect(parsed.jawabanPending).toBe("Klaim pasien layak dibayar.");
+  });
+
+  it("removes generic manual labels from generated sources", () => {
+    const parsed = parseGeneratedAnswer(JSON.stringify({ ringkasan: "ok", jawabanPending: "Pasien memerlukan rawat inap.", sources: ["Manual", "BA Kesepakatan No. 1247/BA/1124"] }));
+    expect(parsed.sources).toEqual(["BA Kesepakatan No. 1247/BA/1124"]);
   });
 
 

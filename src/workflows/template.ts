@@ -1,6 +1,6 @@
 import type { GeneratedAnswer, Template, WorkflowId } from "../types";
 import { extractJsonValue } from "../lib/ai/json";
-import { normalizePendingParagraph, scrubIdentity, validateGeneratedAnswer } from "./standard";
+import { cleanGeneratedSources, normalizePendingParagraph, scrubIdentity, validateGeneratedAnswer } from "./standard";
 
 const PLACEHOLDER_START = /^(?:jelaskan|isi|isikan|uraikan|sebutkan|tambahkan|tuliskan|masukkan|sesuaikan|jabarkan|cantumkan|lengkapi|paparkan|terangkan|buat|bandingkan)\b/i;
 const PARENTHESIS_PATTERN = /\(([^()]*)\)/g;
@@ -52,10 +52,11 @@ Bila teks tetap berakhir dengan kata "Pasien", mulai fill dengan kelanjutan sepe
 [PRIORITAS SUMBER]
 1. Alasan pending BPJS menentukan fokus isi placeholder.
 2. Rekam medis menjadi sumber fakta klinis.
-3. Knowledge lokal hanya menjadi dasar aturan bila benar-benar disertakan dalam konteks dan berkaitan langsung dengan alasan pending.
+3. Isi knowledge lokal hanya menjadi dasar aturan bila benar-benar disertakan dalam konteks dan berkaitan langsung dengan alasan pending. Judul dan sumber hanyalah metadata, bukan isi ketentuan.
 4. Bantuan alasan pengguna adalah arah argumentasi, bukan fakta baru.
 5. Teks tetap template menentukan susunan akhir, tetapi bukan sumber fakta klinis baru.
 Jangan membuat fakta, diagnosis, hasil pemeriksaan, tanggal, terapi, atau regulasi yang tidak tersedia pada sumber tersebut.
+Label generik seperti "Manual", "Knowledge manual", atau "Input manual" bukan nama regulasi dan tidak boleh disebut sebagai sumber.
 
 [PROSES INTERNAL — JANGAN DITULIS]
 1. Identifikasi satu pokok alasan pending.
@@ -76,7 +77,7 @@ Balas hanya JSON valid tanpa markdown atau teks pembuka dengan bentuk persis:
 - Untuk placeholder naratif yang tidak menetapkan batas, gunakan satu paragraf 1-5 kalimat, maksimal 130 kata, tanpa bullet atau numbering.
 - Placeholder data singkat seperti nomor poin, jumlah hari, tanggal, atau kode harus tetap singkat sesuai instruksinya dan tidak dikembangkan menjadi narasi.
 - Isi fill hanya materi yang diperlukan untuk melengkapi placeholder, bukan salinan teks tetap.
-- sources: hanya nama knowledge atau regulasi yang benar-benar digunakan; gunakan [] bila tidak ada.
+- sources: hanya nama dokumen atau regulasi spesifik yang benar-benar digunakan; jangan masukkan label generik seperti "Manual"; gunakan [] bila tidak ada nama sumber spesifik.
 
 [TEMPLATE ASLI — HANYA KONTEKS]
 ${template}
@@ -114,6 +115,7 @@ Bagian ini hanya berlaku untuk placeholder yang meminta narasi klinis, bukan pla
 - Jangan mengulang kalimat pembuka, kriteria, kode diagnosis, atau nama regulasi yang sudah tertulis pada template.
 - Jangan merinci seluruh tanda vital, administrasi, nama ruang, nama DPJP, pemeriksaan, atau obat bila tidak langsung memperkuat jawaban.
 - Jangan menyebut bahwa knowledge atau regulasi tidak tersedia; cukup gunakan dasar klinis yang ada.
+- Jangan menulis "sesuai Manual" atau menjadikan cara input knowledge sebagai nama sumber.
 - Jangan memakai heading, bullet, numbering, bahasa promosi, atau tanda "-" sebagai pemisah kalimat di dalam fills.
 - Jangan mencantumkan atau merekonstruksi nama pasien, nomor SEP, nomor RM, tanggal lahir, alamat, nomor kartu, atau identitas lain yang telah disensor.${revisionNote ? `
 
@@ -156,7 +158,7 @@ export function parseStrictTemplateAnswer(text: string, template: string): Gener
   const answer: GeneratedAnswer = {
     ringkasan: scrubIdentity(String(parsed.ringkasan ?? "")) || "Ringkasan tidak dipisahkan oleh AI.",
     jawabanPending: renderStrictTemplate(template, fills),
-    sources: Array.isArray(parsed.sources) ? parsed.sources.map((source) => String(source).trim()).filter(Boolean) : [],
+    sources: cleanGeneratedSources(parsed.sources),
   };
   validateGeneratedAnswer(answer);
   return answer;
