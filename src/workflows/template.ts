@@ -9,7 +9,7 @@ export const STRICT_TEMPLATE_SCHEMA = {
   type: "OBJECT",
   properties: {
     ringkasan: { type: "STRING", description: "Ringkasan faktual 1-2 kalimat, maksimal 60 kata." },
-    fills: { type: "ARRAY", items: { type: "STRING" }, description: "Isi setiap placeholder sesuai urutan sebagai paragraf profesional 5-7 kalimat, maksimal 130 kata, tanpa menyalin teks tetap template." },
+    fills: { type: "ARRAY", items: { type: "STRING" }, description: "Isi setiap placeholder sesuai urutan dan instruksinya. Untuk placeholder naratif tanpa batas khusus, gunakan 1-5 kalimat, maksimal 130 kata. Jangan menyalin teks tetap template." },
     sources: { type: "ARRAY", items: { type: "STRING" } },
   },
   required: ["ringkasan", "fills", "sources"],
@@ -72,7 +72,9 @@ Balas hanya JSON valid tanpa markdown atau teks pembuka dengan bentuk persis:
 {"ringkasan":"...","fills":["..."],"sources":["..."]}
 - ringkasan: 1-2 kalimat faktual, maksimal 60 kata, berisi kondisi utama dan pokok pending.
 - Jumlah fills wajib tepat ${placeholders.length} dan urutannya wajib sama dengan daftar placeholder.
-- Setiap fill berupa satu paragraf, 5-7 kalimat, maksimal 130 kata, tanpa bullet atau numbering.
+- Setiap fill wajib mengikuti format khusus pada instruksi placeholder.
+- Untuk placeholder naratif yang tidak menetapkan batas, gunakan satu paragraf 1-5 kalimat, maksimal 130 kata, tanpa bullet atau numbering.
+- Placeholder data singkat seperti nomor poin, jumlah hari, tanggal, atau kode harus tetap singkat sesuai instruksinya dan tidak dikembangkan menjadi narasi.
 - Isi fill hanya materi yang diperlukan untuk melengkapi placeholder, bukan salinan teks tetap.
 - sources: hanya nama knowledge atau regulasi yang benar-benar digunakan; gunakan [] bila tidak ada.
 
@@ -82,15 +84,15 @@ ${template}
 [PLACEHOLDER YANG DIISI]
 ${instructions}
 
-[URUTAN ISI FILL]
-Karena kriteria diagnosis dan regulasi yang sudah berada pada teks tetap tidak boleh diulang, sesuaikan urutan berikut dengan konteks setiap placeholder.
+[URUTAN ISI FILL NARATIF]
+Bagian ini hanya berlaku untuk placeholder yang meminta narasi klinis, bukan placeholder nomor, angka, tanggal, kode, atau kutipan singkat. Karena kriteria diagnosis dan regulasi yang sudah berada pada teks tetap tidak boleh diulang, sesuaikan urutan berikut dengan konteks placeholder naratif.
 1. Mulai dengan kondisi, gejala, dan temuan objektif utama yang menjawab alasan pending.
 2. Sebutkan hasil penunjang yang relevan dan maknanya secara proporsional.
 3. Jelaskan terapi atau tindakan penting, termasuk antibiotik intravena bila benar-benar tercatat.
 4. Tegaskan kebutuhan pemantauan atau tingkat pelayanan yang tidak dapat dituntaskan secara rawat jalan atau di FKTP, bila dipersoalkan.
 5. Tutup dengan kesimpulan singkat yang langsung mendukung jawaban klaim.
 
-[POLA ISI DEFAULT]
+[POLA ISI DEFAULT UNTUK FILL NARATIF]
 - Bentuk fill sebagai argumentasi klinis, bukan ringkasan seluruh rekam medis.
 - Gunakan pola: bukti klinis pasien → pemeriksaan penunjang → terapi yang dibutuhkan → alasan tidak tuntas di FKTP → kesimpulan.
 - Jangan membuka fill dengan regulasi atau kriteria yang sudah tertulis pada template.

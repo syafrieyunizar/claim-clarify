@@ -105,7 +105,6 @@ describe("workflow guards", () => {
       "Alasan pending BPJS menentukan fokus",
       "Rekam medis menjadi sumber fakta klinis",
       "Knowledge lokal",
-      "5-7 kalimat, maksimal 130 kata",
       "rawat jalan atau di FKTP",
       'Gunakan "mendukung diagnosis"',
       "Kami berkeberatan",
@@ -115,6 +114,9 @@ describe("workflow guards", () => {
       expect(STANDARD_SYSTEM_PROMPT).toContain(rule);
       expect(prompt).toContain(rule);
     });
+    expect(prompt).toContain("1-5 kalimat, maksimal 130 kata");
+    expect(prompt).toContain("Placeholder data singkat seperti nomor poin, jumlah hari, tanggal, atau kode harus tetap singkat");
+    expect(prompt).toContain("hanya berlaku untuk placeholder yang meminta narasi klinis");
     expect(prompt).toContain("Jangan mengulang kriteria, regulasi, diagnosis, atau kalimat yang sudah tercantum pada teks tetap.");
     expect(prompt).toContain('bukan dengan mengulang kata "Pasien"');
     expect(prompt).not.toContain('"jawabanPending"');
