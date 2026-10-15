@@ -39,7 +39,8 @@ type RegroupingAction =
   | "wait-final-idrg"
   | "final-idrg"
   | "wait-inacbg-grouping"
-  | "grouping"
+  | "grouping-idrg"
+  | "grouping-inacbg"
   | "wait-final-inacbg"
   | "final-inacbg"
   | "final-claim"
@@ -161,12 +162,12 @@ export async function runRegroupingBatch(
           await execute(step.action, step.label, step.timeout);
         }
 
-        await execute("grouping", "Grouping iDRG", 45_000);
+        await execute("grouping-idrg", "Grouping iDRG", 45_000);
         await execute("wait-final-idrg", "Menunggu hasil grouping iDRG", 60_000);
         await execute("final-idrg", "Finalisasi iDRG", 45_000);
         await execute("wait-inacbg-grouping", "Menunggu Grouping INA-CBG", 45_000);
 
-        await execute("grouping", "Grouping INA-CBG", 45_000);
+        await execute("grouping-inacbg", "Grouping INA-CBG", 45_000);
         await execute("wait-final-inacbg", "Menunggu hasil grouping INA-CBG", 60_000);
 
         for (const step of AFTER_INACBG_STEPS) {
@@ -378,8 +379,7 @@ export async function executeEklaimRegroupingStep(action: RegroupingAction, sep:
     return elements.find((element) => wanted.includes(labelOf(element)));
   };
   const hasButton = (labels: string[]) => Boolean(findButton(labels));
-  const clickButton = (labels: string[], missing: string, scope?: ParentNode): InjectedResult => {
-    const button = findButton(labels, scope);
+  const clickElement = (button: HTMLElement | undefined, missing: string): InjectedResult => {
     if (!button) return { ok: false, retry: true, message: missing };
     button.scrollIntoView({ block: "center" });
     const ownerWindow = button.ownerDocument.defaultView ?? window;
@@ -390,7 +390,20 @@ export async function executeEklaimRegroupingStep(action: RegroupingAction, sep:
     } finally {
       ownerWindow.confirm = originalConfirm;
     }
-    return { ok: true, message: labels[0] };
+    return { ok: true, message: labelOf(button) };
+  };
+  const clickButton = (labels: string[], missing: string, scope?: ParentNode) => clickElement(findButton(labels, scope), missing);
+  const handlerOf = (element: Element) => (element.getAttribute("onclick") ?? "").toLocaleLowerCase("id-ID");
+  const findGroupingButton = (stage: "idrg" | "inacbg") => {
+    const buttons = documents.flatMap((current) => Array.from(current.querySelectorAll<HTMLElement>('button, input[type="button"], input[type="submit"], [role="button"]')))
+      .filter((element) => visible(element) && !(element as HTMLButtonElement).disabled && labelOf(element) === "grouping");
+    return buttons.find((button) => handlerOf(button).includes(stage));
+  };
+  const findInacbgFinalButton = () => {
+    const explicit = findButton(["final inacbg", "final ina-cbg"]);
+    if (explicit) return explicit;
+    const generic = findButton(["final"]);
+    return generic && handlerOf(generic).includes("final_cbg") ? generic : undefined;
   };
   const findInput = (selector: string) => documents.map((current) => current.querySelector<HTMLInputElement>(selector)).find(Boolean) ?? null;
   const allStatusElements = () => documents.flatMap((current) => Array.from(current.querySelectorAll<HTMLElement>("td, span, div, p, strong, label")));
@@ -473,7 +486,7 @@ export async function executeEklaimRegroupingStep(action: RegroupingAction, sep:
   }
 
   if (action === "edit-idrg") {
-    if (hasButton(["grouping"])) return { ok: true, message: "Halaman iDRG sudah terbuka." };
+    if (findGroupingButton("idrg")) return { ok: true, message: "Halaman iDRG sudah terbuka." };
     return clickButton(["edit ulang idrg"], "Tombol Edit Ulang iDRG belum ditemukan.");
   }
 
@@ -488,29 +501,28 @@ export async function executeEklaimRegroupingStep(action: RegroupingAction, sep:
   }
 
   if (action === "wait-inacbg-grouping") {
-    return hasButton(["grouping"])
+    return findGroupingButton("inacbg")
       ? { ok: true, message: "Grouping INA-CBG siap dijalankan." }
       : { ok: false, retry: true, message: "Menunggu tombol Grouping INA-CBG." };
   }
 
-  if (action === "grouping") {
-    return clickButton(["grouping"], "Tombol Grouping belum ditemukan.");
+  if (action === "grouping-idrg") {
+    return clickElement(findGroupingButton("idrg"), "Tombol Grouping iDRG belum ditemukan.");
+  }
+
+  if (action === "grouping-inacbg") {
+    return clickElement(findGroupingButton("inacbg"), "Tombol Grouping INA-CBG belum ditemukan.");
   }
 
   if (action === "wait-final-inacbg") {
-    return hasButton(["final inacbg", "final ina-cbg"])
+    return hasButton(["final klaim"]) || findInacbgFinalButton()
       ? { ok: true, message: "Hasil grouping INA-CBG siap difinalkan." }
       : { ok: false, retry: true, message: "Menunggu tombol Final INA-CBG." };
   }
 
   if (action === "final-inacbg") {
     if (hasButton(["final klaim"])) return { ok: true, message: "INA-CBG sudah difinalkan." };
-    const explicit = findButton(["final inacbg", "final ina-cbg"]);
-    if (explicit) return clickButton(["final inacbg", "final ina-cbg"], "Tombol Final INA-CBG belum ditemukan.");
-    if (documents.some((current) => current.body?.textContent?.toLocaleLowerCase("id-ID").includes("ina-cbg"))) {
-      return clickButton(["final"], "Tombol Final INA-CBG belum ditemukan.");
-    }
-    return { ok: false, retry: true, message: "Tombol Final INA-CBG belum ditemukan." };
+    return clickElement(findInacbgFinalButton(), "Tombol Final INA-CBG belum ditemukan.");
   }
 
   if (action === "final-claim") {

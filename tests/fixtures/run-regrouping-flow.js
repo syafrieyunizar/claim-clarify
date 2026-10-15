@@ -9,17 +9,21 @@ async (page) => {
     claim.addEventListener("click", (event) => {
       if (event.target.id === "edit-claim") claim.innerHTML = '<button id="confirm-edit">Ya (edit ulang)</button><button>Tidak (batal edit)</button>';
       if (event.target.id === "confirm-edit") claim.innerHTML = `${groupingTable("26 Jun 2026 09:54", "final")}<input type="button" id="edit-idrg" value="Edit Ulang iDRG">`;
-      if (event.target.id === "edit-idrg") claim.innerHTML = `${groupingTable("26 Jun 2026 09:54")}<button id="grouping">Grouping</button>`;
+      if (event.target.id === "edit-idrg") claim.innerHTML = `${groupingTable("26 Jun 2026 09:54")}<button id="grouping" onclick="window.__groupingStage='idrg'">Grouping</button>`;
       if (event.target.id === "grouping" && document.body.dataset.groupingStage === "idrg") {
         setTimeout(() => { claim.innerHTML = `${groupingTable("26 Jun 2026 09:54")}<input type="button" id="final-idrg" value="Final iDRG">`; }, 100);
       }
       if (event.target.id === "final-idrg") {
-        document.body.dataset.groupingStage = "inacbg";
-        claim.innerHTML = `${groupingTable("26 Jun 2026 09:54")}<input type="button" id="final-idrg" value="Final iDRG"><button id="grouping">Grouping</button>`;
+        document.body.dataset.groupingStage = "transition";
+        claim.innerHTML = `${groupingTable("26 Jun 2026 09:54")}<input type="button" id="final-idrg" value="Final iDRG"><button id="grouping" onclick="window.__groupingStage='idrg'">Grouping</button>`;
+        setTimeout(() => {
+          document.body.dataset.groupingStage = "inacbg";
+          claim.innerHTML = `${groupingTable("26 Jun 2026 09:54")}<input type="button" id="final-idrg" value="Final iDRG"><button id="grouping" onclick="window.__groupingStage='inacbg'">Grouping</button>`;
+        }, 100);
       }
       if (event.target.id === "grouping" && document.body.dataset.groupingStage === "inacbg") {
         setTimeout(() => {
-          claim.innerHTML = `${groupingTable("20 Agu 2026 10:30")}<button id="final-inacbg">Final INACBG</button>`;
+          claim.innerHTML = `${groupingTable("20 Agu 2026 10:30")}<button id="final-inacbg" onclick="window.__final_cbg='inacbg'">Final</button>`;
         }, 100);
       }
       if (event.target.id === "final-inacbg") claim.innerHTML = `${groupingTable("20 Agu 2026 10:30", "final")}<button id="final-claim">Final Klaim</button>`;
@@ -35,13 +39,15 @@ async (page) => {
     steps.push(await executeEklaimRegroupingStep("edit-claim", ""));
     steps.push(await executeEklaimRegroupingStep("confirm-edit", ""));
     steps.push(await executeEklaimRegroupingStep("edit-idrg", ""));
-    steps.push(await executeEklaimRegroupingStep("grouping", ""));
+    steps.push(await executeEklaimRegroupingStep("grouping-idrg", ""));
     const earlyIdrg = await executeEklaimRegroupingStep("wait-final-idrg", "");
     await new Promise((resolve) => setTimeout(resolve, 150));
     steps.push(await executeEklaimRegroupingStep("wait-final-idrg", ""));
     steps.push(await executeEklaimRegroupingStep("final-idrg", ""));
+    const staleIdrgGroupingBlocked = await executeEklaimRegroupingStep("wait-inacbg-grouping", "");
+    await new Promise((resolve) => setTimeout(resolve, 150));
     steps.push(await executeEklaimRegroupingStep("wait-inacbg-grouping", ""));
-    steps.push(await executeEklaimRegroupingStep("grouping", ""));
+    steps.push(await executeEklaimRegroupingStep("grouping-inacbg", ""));
     const earlyInacbg = await executeEklaimRegroupingStep("wait-final-inacbg", "");
     await new Promise((resolve) => setTimeout(resolve, 150));
     steps.push(await executeEklaimRegroupingStep("wait-final-inacbg", ""));
@@ -54,6 +60,7 @@ async (page) => {
     return {
       steps,
       earlyIdrgBlocked: !earlyIdrg.ok && earlyIdrg.retry === true,
+      staleIdrgGroupingBlocked: !staleIdrgGroupingBlocked.ok && staleIdrgGroupingBlocked.retry === true,
       earlyInacbgBlocked: !earlyInacbg.ok && earlyInacbg.retry === true,
       navigationWasNotClicked: location.hash === "",
       sendClickCount: Number(document.body.dataset.sendClicks || 0),
@@ -62,7 +69,7 @@ async (page) => {
     };
   });
 
-  if (!result.steps.every((step) => step.ok) || !result.earlyIdrgBlocked || !result.earlyInacbgBlocked || !result.navigationWasNotClicked || result.sendClickCount !== 1 || result.finalStatus !== "Terkirim" || !result.pageUnlocked) {
+  if (!result.steps.every((step) => step.ok) || !result.earlyIdrgBlocked || !result.staleIdrgGroupingBlocked || !result.earlyInacbgBlocked || !result.navigationWasNotClicked || result.sendClickCount !== 1 || result.finalStatus !== "Terkirim" || !result.pageUnlocked) {
     throw new Error(`Simulasi Re-grouping gagal: ${JSON.stringify(result)}`);
   }
   console.log(JSON.stringify(result, null, 2));
