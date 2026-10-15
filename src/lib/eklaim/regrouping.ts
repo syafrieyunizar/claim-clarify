@@ -39,9 +39,8 @@ type RegroupingAction =
   | "wait-final-idrg"
   | "final-idrg"
   | "wait-inacbg-grouping"
-  | "read-grouping-marker"
   | "grouping"
-  | "wait-grouping-change"
+  | "wait-final-inacbg"
   | "final-inacbg"
   | "final-claim"
   | "send-online"
@@ -141,9 +140,8 @@ export async function runRegroupingBatch(
         await execute("final-idrg", "Finalisasi iDRG", 45_000);
         await execute("wait-inacbg-grouping", "Menunggu Grouping INA-CBG", 45_000);
 
-        const groupingBefore = await execute("read-grouping-marker", "Membaca hasil INA-CBG sebelumnya", 20_000);
         await execute("grouping", "Grouping INA-CBG", 45_000);
-        await execute("wait-grouping-change", "Menunggu hasil grouping INA-CBG", 60_000, groupingBefore.marker ?? "");
+        await execute("wait-final-inacbg", "Menunggu hasil grouping INA-CBG", 60_000);
 
         for (const step of AFTER_INACBG_STEPS) {
           await execute(step.action, step.label, step.timeout);
@@ -263,7 +261,7 @@ function delay(milliseconds: number) {
   return new Promise<void>((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
 
-export async function executeEklaimRegroupingStep(action: RegroupingAction, sep: string, context = ""): Promise<InjectedResult> {
+export async function executeEklaimRegroupingStep(action: RegroupingAction, sep: string, _context = ""): Promise<InjectedResult> {
   const normalize = (value: unknown) => String(value ?? "").replace(/\s+/g, "").toUpperCase();
   const documents: Document[] = [];
   const collectDocuments = (current: Document) => {
@@ -376,18 +374,6 @@ export async function executeEklaimRegroupingStep(action: RegroupingAction, sep:
       const label = labelOf(element);
       return label === "terkirim" || label === "status terkirim" || label.includes("status klaim terkirim");
     });
-  const groupingMarker = () => {
-    for (const current of documents) {
-      const rows = Array.from(current.querySelectorAll<HTMLTableRowElement>("tr"));
-      const row = rows.find((candidate) => {
-        const cells = candidate.querySelectorAll("th, td");
-        return cells.length > 1 && labelOf(cells[0]) === "info" && labelOf(candidate.closest("table") ?? candidate).includes("hasil grouping inacbg");
-      });
-      if (row?.textContent?.trim()) return row.textContent.replace(/[\s\u00a0]+/g, " ").trim();
-    }
-    return "";
-  };
-
   if (action === "validate-home") {
     const input = findInput("#qpat");
     return input && visible(input) && !input.disabled
@@ -476,27 +462,19 @@ export async function executeEklaimRegroupingStep(action: RegroupingAction, sep:
   }
 
   if (action === "wait-inacbg-grouping") {
-    return hasButton(["grouping"]) && !hasButton(["final idrg"])
+    return hasButton(["grouping"])
       ? { ok: true, message: "Grouping INA-CBG siap dijalankan." }
       : { ok: false, retry: true, message: "Menunggu tombol Grouping INA-CBG." };
-  }
-
-  if (action === "read-grouping-marker") {
-    const marker = groupingMarker();
-    return marker
-      ? { ok: true, message: "Waktu grouping sebelumnya terbaca.", marker }
-      : { ok: false, retry: true, message: "Informasi waktu hasil grouping belum terbaca." };
   }
 
   if (action === "grouping") {
     return clickButton(["grouping"], "Tombol Grouping belum ditemukan.");
   }
 
-  if (action === "wait-grouping-change") {
-    const marker = groupingMarker();
-    return marker && marker !== context
-      ? { ok: true, message: "Waktu hasil grouping sudah berubah.", marker }
-      : { ok: false, retry: true, message: "Menunggu waktu hasil grouping berubah." };
+  if (action === "wait-final-inacbg") {
+    return hasButton(["final inacbg", "final ina-cbg"])
+      ? { ok: true, message: "Hasil grouping INA-CBG siap difinalkan." }
+      : { ok: false, retry: true, message: "Menunggu tombol Final INA-CBG." };
   }
 
   if (action === "final-inacbg") {

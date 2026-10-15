@@ -170,7 +170,6 @@ describe("workflow guards", () => {
           if (sep === failedSep && action === "open-admission") {
             return [{ result: { ok: false, retry: false, message: "Admission tidak ditemukan." } }];
           }
-          if (action === "read-grouping-marker") return [{ result: { ok: true, message: "Marker", marker: "lama" } }];
           return [{ result: { ok: true, message: "OK" } }];
         }),
       },
@@ -203,9 +202,7 @@ describe("workflow guards", () => {
       },
       permissions: { contains: vi.fn().mockResolvedValue(true) },
       scripting: {
-        executeScript: vi.fn().mockImplementation(async ({ args }: { args: [string, string, string] }) => {
-          const [action] = args;
-          if (action === "read-grouping-marker") return [{ result: { ok: true, message: "Marker", marker: "lama" } }];
+        executeScript: vi.fn().mockImplementation(async () => {
           return [{ result: { ok: true, message: "OK" } }];
         }),
       },
@@ -238,9 +235,7 @@ describe("workflow guards", () => {
       },
       permissions: { contains: vi.fn().mockResolvedValue(true) },
       scripting: {
-        executeScript: vi.fn().mockImplementation(async ({ args }: { args: [string, string, string] }) => {
-          const [action] = args;
-          if (action === "read-grouping-marker") return [{ result: { ok: true, message: "Marker", marker: "lama" } }];
+        executeScript: vi.fn().mockImplementation(async () => {
           return [{ result: { ok: true, message: "OK" } }];
         }),
       },

@@ -1,7 +1,7 @@
 ﻿{
   "manifest_version": 3,
   "name": "Claim Clarify",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Asisten side panel untuk menyusun draf jawaban pending klaim BPJS.",
   "permissions": ["sidePanel", "storage", "activeTab", "tabs", "scripting"],
   "host_permissions": ["file:///*"],

@@ -15,11 +15,12 @@ async (page) => {
       }
       if (event.target.id === "final-idrg") {
         document.body.dataset.groupingStage = "inacbg";
-        claim.innerHTML = `${groupingTable("26 Jun 2026 09:54")}<button id="grouping">Grouping</button>`;
+        claim.innerHTML = `${groupingTable("26 Jun 2026 09:54")}<input type="button" id="final-idrg" value="Final iDRG"><button id="grouping">Grouping</button>`;
       }
       if (event.target.id === "grouping" && document.body.dataset.groupingStage === "inacbg") {
-        claim.innerHTML += '<button id="final-inacbg">Final INACBG</button>';
-        setTimeout(() => { document.getElementById("grouping-info").textContent = "Dokter @ 20 Agu 2026 10:30"; }, 100);
+        setTimeout(() => {
+          claim.innerHTML = `${groupingTable("20 Agu 2026 10:30")}<button id="final-inacbg">Final INACBG</button>`;
+        }, 100);
       }
       if (event.target.id === "final-inacbg") claim.innerHTML = `${groupingTable("20 Agu 2026 10:30", "final")}<button id="final-claim">Final Klaim</button>`;
       if (event.target.id === "final-claim") claim.innerHTML = `${groupingTable("20 Agu 2026 10:30", "final")}<p id="send-status">Terkirim</p><button id="send-online">Kirim Klaim Online</button>`;
@@ -40,12 +41,10 @@ async (page) => {
     steps.push(await executeEklaimRegroupingStep("wait-final-idrg", ""));
     steps.push(await executeEklaimRegroupingStep("final-idrg", ""));
     steps.push(await executeEklaimRegroupingStep("wait-inacbg-grouping", ""));
-    const before = await executeEklaimRegroupingStep("read-grouping-marker", "");
-    steps.push(before);
     steps.push(await executeEklaimRegroupingStep("grouping", ""));
-    const early = await executeEklaimRegroupingStep("wait-grouping-change", "", before.marker);
+    const earlyInacbg = await executeEklaimRegroupingStep("wait-final-inacbg", "");
     await new Promise((resolve) => setTimeout(resolve, 150));
-    steps.push(await executeEklaimRegroupingStep("wait-grouping-change", "", before.marker));
+    steps.push(await executeEklaimRegroupingStep("wait-final-inacbg", ""));
     steps.push(await executeEklaimRegroupingStep("final-inacbg", ""));
     steps.push(await executeEklaimRegroupingStep("final-claim", ""));
     steps.push(await executeEklaimRegroupingStep("send-online", ""));
@@ -55,7 +54,7 @@ async (page) => {
     return {
       steps,
       earlyIdrgBlocked: !earlyIdrg.ok && earlyIdrg.retry === true,
-      earlyWaitBlocked: !early.ok && early.retry === true,
+      earlyInacbgBlocked: !earlyInacbg.ok && earlyInacbg.retry === true,
       navigationWasNotClicked: location.hash === "",
       sendClickCount: Number(document.body.dataset.sendClicks || 0),
       finalStatus: document.getElementById("send-status")?.textContent,
@@ -63,7 +62,7 @@ async (page) => {
     };
   });
 
-  if (!result.steps.every((step) => step.ok) || !result.earlyIdrgBlocked || !result.earlyWaitBlocked || !result.navigationWasNotClicked || result.sendClickCount !== 1 || result.finalStatus !== "Terkirim" || !result.pageUnlocked) {
+  if (!result.steps.every((step) => step.ok) || !result.earlyIdrgBlocked || !result.earlyInacbgBlocked || !result.navigationWasNotClicked || result.sendClickCount !== 1 || result.finalStatus !== "Terkirim" || !result.pageUnlocked) {
     throw new Error(`Simulasi Re-grouping gagal: ${JSON.stringify(result)}`);
   }
   console.log(JSON.stringify(result, null, 2));
