@@ -9,32 +9,56 @@ export interface RegroupingProgress {
   error?: string;
 }
 
+export interface RegroupingFailure {
+  sep: string;
+  step: string;
+  error: string;
+}
+
+export interface RegroupingBatchResult {
+  succeeded: string[];
+  failed: RegroupingFailure[];
+  pending: string[];
+  stopped: boolean;
+  fatalError?: string;
+}
+
+export interface RegroupingControls {
+  isPauseRequested: () => boolean;
+  isStopAfterCurrentRequested: () => boolean;
+  onPauseChange?: (paused: boolean) => void;
+}
+
 type RegroupingAction =
   | "validate-home"
   | "open-patient"
   | "open-admission"
   | "edit-claim"
   | "confirm-edit"
-  | "edit-inacbg"
+  | "edit-idrg"
+  | "wait-final-idrg"
+  | "final-idrg"
+  | "wait-inacbg-grouping"
   | "read-grouping-marker"
   | "grouping"
   | "wait-grouping-change"
   | "final-inacbg"
   | "final-claim"
   | "send-online"
-  | "wait-sent";
+  | "wait-sent"
+  | "pause-lock"
+  | "clear-lock";
 
 type InjectedResult = { ok: boolean; retry?: boolean; message: string; marker?: string };
 
-const CANCELLED = "__CLAIM_CLARIFY_REGROUPING_CANCELLED__";
 const BEFORE_GROUPING_STEPS: Array<{ action: RegroupingAction; label: string; timeout?: number }> = [
   { action: "open-patient", label: "Mencari SEP", timeout: 20_000 },
   { action: "open-admission", label: "Membuka admission", timeout: 30_000 },
   { action: "edit-claim", label: "Membuka edit ulang klaim" },
   { action: "confirm-edit", label: "Mengonfirmasi edit ulang" },
-  { action: "edit-inacbg", label: "Membuka Edit Ulang INACBG" },
+  { action: "edit-idrg", label: "Membuka Edit Ulang iDRG" },
 ];
-const AFTER_GROUPING_STEPS: Array<{ action: RegroupingAction; label: string; timeout?: number; delayAfter?: number }> = [
+const AFTER_INACBG_STEPS: Array<{ action: RegroupingAction; label: string; timeout?: number; delayAfter?: number }> = [
   { action: "final-inacbg", label: "Finalisasi INA-CBG", timeout: 45_000 },
   { action: "final-claim", label: "Finalisasi klaim", timeout: 45_000 },
   { action: "send-online", label: "Mengirim klaim online", timeout: 45_000, delayAfter: 1_500 },
@@ -54,11 +78,15 @@ function isLikelySep(value: string) {
   return /^[A-Z0-9]{10,30}$/.test(value) && /\d/.test(value);
 }
 
+export function getEklaimHomeUrl(currentUrl: string) {
+  return new URL("index.php?0=padm&slpat_ch=y", currentUrl).toString();
+}
+
 export async function runRegroupingBatch(
   seps: string[],
   onProgress: (progress: RegroupingProgress) => void,
-  isCancelled: () => boolean,
-) {
+  controls: RegroupingControls,
+): Promise<RegroupingBatchResult> {
   if (typeof chrome === "undefined" || !chrome.tabs || !chrome.scripting) {
     throw new Error("Otomatisasi e-Klaim hanya tersedia di Chrome Extension.");
   }
@@ -69,65 +97,142 @@ export async function runRegroupingBatch(
   }
 
   const tabId = tab.id;
-  const homeUrl = tab.url;
-  const originPermission = { origins: [`${new URL(homeUrl).origin}/*`] };
+  const homeUrl = getEklaimHomeUrl(tab.url);
+  const originPermission = { origins: [`${new URL(tab.url).origin}/*`] };
   if (chrome.permissions && !(await chrome.permissions.contains(originPermission))) {
     const granted = await chrome.permissions.request(originPermission);
     if (!granted) throw new Error("Izin mengakses halaman e-Klaim ditolak.");
   }
-  await runStep(tabId, "validate-home", "", 4_000, isCancelled);
 
-  for (let index = 0; index < seps.length; index += 1) {
-    const sep = seps[index];
-    const base = { sep, index, total: seps.length };
-    try {
-      assertRunning(isCancelled);
-      onProgress({ ...base, status: "running", step: "Memeriksa halaman awal" });
-      await runStep(tabId, "validate-home", sep, 8_000, isCancelled);
+  const succeeded: string[] = [];
+  const failed: RegroupingFailure[] = [];
+  let stopped = false;
+  let fatalError: string | undefined;
 
-      for (const step of BEFORE_GROUPING_STEPS) {
-        assertRunning(isCancelled);
-        onProgress({ ...base, status: "running", step: step.label });
-        await runStep(tabId, step.action, sep, step.timeout ?? 30_000, isCancelled);
+  try {
+    await runStep(tabId, "validate-home", "", 8_000);
+    for (let index = 0; index < seps.length; index += 1) {
+      if (controls.isStopAfterCurrentRequested()) {
+        stopped = true;
+        break;
+      }
+      const sep = seps[index];
+      const base = { sep, index, total: seps.length };
+      let currentStep = "Memeriksa halaman awal";
+      let sendAttempted = false;
+      let sent = false;
+      const execute = async (action: RegroupingAction, label: string, timeout = 30_000, context = "") => {
+        await waitWhilePaused(tabId, controls);
+        currentStep = label;
+        onProgress({ ...base, status: "running", step: label });
+        const result = await runStep(tabId, action, sep, timeout, context);
         await delay(350);
+        return result;
+      };
+
+      try {
+        await execute("validate-home", "Memeriksa halaman awal", 8_000);
+        for (const step of BEFORE_GROUPING_STEPS) {
+          await execute(step.action, step.label, step.timeout);
+        }
+
+        await execute("grouping", "Grouping iDRG", 45_000);
+        await execute("wait-final-idrg", "Menunggu hasil grouping iDRG", 60_000);
+        await execute("final-idrg", "Finalisasi iDRG", 45_000);
+        await execute("wait-inacbg-grouping", "Menunggu Grouping INA-CBG", 45_000);
+
+        const groupingBefore = await execute("read-grouping-marker", "Membaca hasil INA-CBG sebelumnya", 20_000);
+        await execute("grouping", "Grouping INA-CBG", 45_000);
+        await execute("wait-grouping-change", "Menunggu hasil grouping INA-CBG", 60_000, groupingBefore.marker ?? "");
+
+        for (const step of AFTER_INACBG_STEPS) {
+          await execute(step.action, step.label, step.timeout);
+          if (step.action === "send-online") sendAttempted = true;
+          if (step.delayAfter) await delay(step.delayAfter);
+        }
+
+        sent = true;
+        succeeded.push(sep);
+        onProgress({ ...base, status: "done", step: "Terkirim" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Re-grouping gagal.";
+        if (sendAttempted) {
+          try {
+            await runStep(tabId, "wait-sent", sep, 5_000);
+            sent = true;
+            succeeded.push(sep);
+            onProgress({ ...base, status: "done", step: "Terkirim" });
+          } catch {
+            // Keep the original failure when the sent status cannot be verified.
+          }
+        }
+        if (!sent) {
+          const failure = { sep, step: currentStep, error: message };
+          failed.push(failure);
+          onProgress({ ...base, status: "failed", step: currentStep, error: message });
+        }
       }
 
-      onProgress({ ...base, status: "running", step: "Membaca waktu grouping sebelumnya" });
-      const groupingBefore = await runStep(tabId, "read-grouping-marker", sep, 15_000, isCancelled);
-      onProgress({ ...base, status: "running", step: "Menjalankan grouping" });
-      await runStep(tabId, "grouping", sep, 30_000, isCancelled);
-      onProgress({ ...base, status: "running", step: "Menunggu hasil grouping berubah" });
-      await runStep(tabId, "wait-grouping-change", sep, 60_000, isCancelled, groupingBefore.marker ?? "");
-
-      for (const step of AFTER_GROUPING_STEPS) {
-        assertRunning(isCancelled);
-        onProgress({ ...base, status: "running", step: step.label });
-        await runStep(tabId, step.action, sep, step.timeout ?? 30_000, isCancelled);
-        await delay(step.delayAfter ?? 350);
+      try {
+        await returnToHome(tabId, homeUrl, sep);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Gagal kembali ke halaman awal e-Klaim.";
+        fatalError = sent
+          ? `${sep} sudah berhasil dikirim online, tetapi gagal kembali ke halaman awal. ${message}`
+          : `${sep} gagal diproses dan halaman awal e-Klaim tidak dapat dibuka. ${message}`;
+        break;
       }
 
-      onProgress({ ...base, status: "running", step: "Kembali ke halaman awal" });
-      await chrome.tabs.update(tabId, { url: homeUrl });
-      await runStep(tabId, "validate-home", sep, 30_000, isCancelled);
-      onProgress({ ...base, status: "done", step: "Terkirim" });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Re-grouping gagal.";
-      if (message === CANCELLED) {
-        onProgress({ ...base, status: "cancelled", step: "Dihentikan" });
-        throw new Error("Proses dihentikan pengguna.");
+      if (controls.isStopAfterCurrentRequested()) {
+        stopped = true;
+        break;
       }
-      onProgress({ ...base, status: "failed", step: "Gagal", error: message });
-      throw new Error(`${sep}: ${message}`);
     }
+  } finally {
+    controls.onPauseChange?.(false);
+    await clearPageLock(tabId);
+  }
+
+  const finished = new Set([...succeeded, ...failed.map((item) => item.sep)]);
+  return {
+    succeeded,
+    failed,
+    pending: seps.filter((sep) => !finished.has(sep)),
+    stopped,
+    ...(fatalError ? { fatalError } : {}),
+  };
+}
+
+async function returnToHome(
+  tabId: number,
+  homeUrl: string,
+  sep: string,
+) {
+  await chrome.tabs.update(tabId, { url: homeUrl });
+  await runStep(tabId, "validate-home", sep, 30_000);
+}
+
+async function waitWhilePaused(tabId: number, controls: RegroupingControls) {
+  if (!controls.isPauseRequested() || controls.isStopAfterCurrentRequested()) return;
+  controls.onPauseChange?.(true);
+  await runStep(tabId, "pause-lock", "", 5_000);
+  while (controls.isPauseRequested() && !controls.isStopAfterCurrentRequested()) await delay(200);
+  controls.onPauseChange?.(false);
+}
+
+async function clearPageLock(tabId: number) {
+  try {
+    await runStep(tabId, "clear-lock", "", 2_000);
+  } catch {
+    // The tab may have been closed or navigated away; cleanup is best effort.
   }
 }
 
-async function runStep(tabId: number, action: RegroupingAction, sep: string, timeout: number, isCancelled: () => boolean, context = "") {
+async function runStep(tabId: number, action: RegroupingAction, sep: string, timeout: number, context = "") {
   const deadline = Date.now() + timeout;
   let lastMessage = "Elemen e-Klaim belum siap.";
 
   while (Date.now() < deadline) {
-    assertRunning(isCancelled);
     let result: InjectedResult | undefined;
     try {
       const [execution] = await chrome.scripting.executeScript({
@@ -154,12 +259,8 @@ async function runStep(tabId: number, action: RegroupingAction, sep: string, tim
   throw new Error(lastMessage);
 }
 
-function assertRunning(isCancelled: () => boolean) {
-  if (isCancelled()) throw new Error(CANCELLED);
-}
-
 function delay(milliseconds: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+  return new Promise<void>((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
 
 export async function executeEklaimRegroupingStep(action: RegroupingAction, sep: string, context = ""): Promise<InjectedResult> {
@@ -177,6 +278,61 @@ export async function executeEklaimRegroupingStep(action: RegroupingAction, sep:
     }
   };
   collectDocuments(document);
+  const lockId = "claim-clarify-regrouping-lock";
+  const setPageLock = (paused: boolean) => {
+    let overlay = document.getElementById(lockId) as HTMLDivElement | null;
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = lockId;
+      Object.assign(overlay.style, {
+        position: "fixed",
+        inset: "0",
+        zIndex: "2147483647",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+        background: "rgba(15, 23, 42, 0.58)",
+        cursor: "not-allowed",
+        pointerEvents: "auto",
+      });
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = "";
+    const notice = document.createElement("div");
+    Object.assign(notice.style, {
+      maxWidth: "420px",
+      borderRadius: "14px",
+      padding: "20px 22px",
+      background: "#ffffff",
+      color: "#102a43",
+      boxShadow: "0 18px 55px rgba(15, 23, 42, 0.3)",
+      fontFamily: "Arial, sans-serif",
+      textAlign: "center",
+      lineHeight: "1.5",
+    });
+    const title = document.createElement("strong");
+    title.style.display = "block";
+    title.style.marginBottom = "6px";
+    title.style.fontSize = "16px";
+    title.textContent = paused ? "Re-grouping sedang dijeda" : "Re-grouping sedang berjalan";
+    const detail = document.createElement("span");
+    detail.style.fontSize = "13px";
+    detail.textContent = paused
+      ? "Interaksi pada halaman e-Klaim sementara dikunci. Klik Lanjutkan di Claim Clarify untuk meneruskan."
+      : "Interaksi pada halaman e-Klaim sementara dikunci untuk menjaga urutan proses.";
+    notice.append(title, detail);
+    overlay.appendChild(notice);
+  };
+  if (action === "clear-lock") {
+    document.getElementById(lockId)?.remove();
+    return { ok: true, message: "Kunci halaman dilepas." };
+  }
+  if (action === "pause-lock") {
+    setPageLock(true);
+    return { ok: true, message: "Halaman dikunci saat proses dijeda." };
+  }
+  setPageLock(false);
   const visible = (element: Element) => {
     const node = element as HTMLElement;
     const style = node.ownerDocument.defaultView?.getComputedStyle(node);
@@ -295,18 +451,34 @@ export async function executeEklaimRegroupingStep(action: RegroupingAction, sep:
   if (action === "edit-claim") {
     for (const current of documents) current.defaultView?.scrollTo(0, current.documentElement.scrollHeight);
     await new Promise((resolve) => window.setTimeout(resolve, 250));
-    if (hasButton(["ya (edit ulang)", "edit ulang inacbg", "edit ulang ina-cbg"])) return { ok: true, message: "Edit ulang sudah terbuka." };
+    if (hasButton(["ya (edit ulang)", "edit ulang idrg"])) return { ok: true, message: "Edit ulang sudah terbuka." };
     return clickButton(["edit ulang klaim"], "Tombol Edit Ulang Klaim belum ditemukan.");
   }
 
   if (action === "confirm-edit") {
-    if (hasButton(["edit ulang inacbg", "edit ulang ina-cbg"])) return { ok: true, message: "Konfirmasi edit ulang selesai." };
+    if (hasButton(["edit ulang idrg"])) return { ok: true, message: "Konfirmasi edit ulang selesai." };
     return clickButton(["ya (edit ulang)", "ya edit ulang", "ya, edit ulang"], "Tombol Ya (edit ulang) belum ditemukan.");
   }
 
-  if (action === "edit-inacbg") {
-    if (hasButton(["grouping"])) return { ok: true, message: "Halaman INA-CBG sudah terbuka." };
-    return clickButton(["edit ulang inacbg", "edit ulang ina-cbg", "edit inacbg", "edit ina-cbg"], "Tombol Edit Ulang INACBG belum ditemukan.");
+  if (action === "edit-idrg") {
+    if (hasButton(["grouping"])) return { ok: true, message: "Halaman iDRG sudah terbuka." };
+    return clickButton(["edit ulang idrg"], "Tombol Edit Ulang iDRG belum ditemukan.");
+  }
+
+  if (action === "wait-final-idrg") {
+    return hasButton(["final idrg"])
+      ? { ok: true, message: "Hasil grouping iDRG siap difinalkan." }
+      : { ok: false, retry: true, message: "Menunggu tombol Final iDRG." };
+  }
+
+  if (action === "final-idrg") {
+    return clickButton(["final idrg"], "Tombol Final iDRG belum ditemukan.");
+  }
+
+  if (action === "wait-inacbg-grouping") {
+    return hasButton(["grouping"]) && !hasButton(["final idrg"])
+      ? { ok: true, message: "Grouping INA-CBG siap dijalankan." }
+      : { ok: false, retry: true, message: "Menunggu tombol Grouping INA-CBG." };
   }
 
   if (action === "read-grouping-marker") {

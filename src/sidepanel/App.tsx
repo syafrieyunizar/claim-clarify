@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeft, Bot, Check, ChevronDown, ChevronRight, ClipboardList, Copy, Eye, EyeOff,
   DatabaseBackup, FileText, FolderOpen, Globe, History, KeyRound, Layers, Link2, Plus, RefreshCw,
-  Pencil, Scale, Search, Server, Settings, ShieldCheck, Stethoscope, Tag, Trash2, Upload, Download, Users, X, type LucideIcon,
+  Pause, Pencil, Play, Scale, Search, Server, Settings, ShieldCheck, Stethoscope, Tag, Trash2, Upload, Download, Users, X, type LucideIcon,
 } from "lucide-react";
 import { appendAuditEntry, listAuditEntries, removeAuditEntry, replaceAuditEntries } from "../lib/audit/log";
 import { ADMIN_PROVIDER_OPTIONS, clearAdminUserSession, createAdminAccessUser, deleteAdminAccessUser, getAdminAiConfig, getAdminProviderLabel, listAdminAccessUsers, listClaimLibrary, listClaimLibraryReviews, loginAdminBackend, loginAdminUser, manageClaimLibraryItem, normalizeAdminProviderKey, resetAdminAccessUserPassword, resetAdminAiConfig, reviewClaimLibraryItem, saveAdminAiConfig, submitClaimKnowledge, submitClaimTemplate, validateAdminAiConfig, validateStoredAdminUserSession, type AdminAccessUser, type AdminAiDraft, type AdminAiProviderMeta, type ClaimKnowledgeEntry, type ClaimLibraryData, type ClaimTemplateEntry } from "../lib/ai/admin";
@@ -11,7 +11,7 @@ import { buildKnowledgeChunkUserMessage, formatKnowledgeContext, KNOWLEDGE_CHUNK
 import { captureActiveTabPdf, parsePdfFile, parsePdfUrl } from "../lib/pdf/parse";
 import { redactSensitiveData } from "../lib/privacy/redact";
 import { getLocal, removeLocal, setLocal } from "../lib/storage/local";
-import { parseSepInput, runRegroupingBatch, type RegroupingProgress } from "../lib/eklaim/regrouping";
+import { parseSepInput, runRegroupingBatch, type RegroupingBatchResult, type RegroupingProgress } from "../lib/eklaim/regrouping";
 import { AMBER, AMBER_SOFT, INK, MIST, MIST_DARK, PAPER, PLUM, PLUM_SOFT, SLATE, TEAL, TEAL_SOFT } from "../theme";
 import type { AIConfig, AuditEntry, ClaimChallengeAssessment, GeneratedAnswer, KnowledgeChunk, Template, WorkflowId } from "../types";
 import { analyzeReadmisiTexts, hasMinimumReadmisiFiles } from "../workflows/readmisi";
@@ -440,31 +440,95 @@ function RegroupingStage({ onBack }: { onBack: () => void }) {
   const [value, setValue] = useState("");
   const [progress, setProgress] = useState<RegroupingProgress[]>([]);
   const [running, setRunning] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [pausePending, setPausePending] = useState(false);
+  const [stopPending, setStopPending] = useState(false);
   const [status, setStatus] = useState("");
-  const cancelled = useRef(false);
+  const [statusError, setStatusError] = useState(false);
+  const [summary, setSummary] = useState<RegroupingBatchResult | null>(null);
+  const pauseRequested = useRef(false);
+  const stopAfterCurrent = useRef(false);
   const parsed = useMemo(() => parseSepInput(value), [value]);
 
-  useEffect(() => () => { cancelled.current = true; }, []);
+  useEffect(() => () => {
+    pauseRequested.current = false;
+    stopAfterCurrent.current = true;
+  }, []);
 
   async function start() {
     if (!parsed.seps.length || parsed.invalid.length) return;
-    cancelled.current = false;
+    pauseRequested.current = false;
+    stopAfterCurrent.current = false;
     setRunning(true);
+    setPaused(false);
+    setPausePending(false);
+    setStopPending(false);
     setStatus("");
+    setStatusError(false);
+    setSummary(null);
     setProgress(parsed.seps.map((sep, index) => ({ sep, index, total: parsed.seps.length, status: "pending", step: "Menunggu" })));
     try {
-      await runRegroupingBatch(parsed.seps, (next) => {
+      const result = await runRegroupingBatch(parsed.seps, (next) => {
         setProgress((current) => current.map((item) => item.sep === next.sep ? next : item));
-      }, () => cancelled.current);
-      setStatus(`${parsed.seps.length} SEP selesai di-re-grouping dan terkirim.`);
+      }, {
+        isPauseRequested: () => pauseRequested.current,
+        isStopAfterCurrentRequested: () => stopAfterCurrent.current,
+        onPauseChange: (nextPaused) => {
+          setPaused(nextPaused);
+          setPausePending(false);
+          if (nextPaused) setStatus("Proses dijeda pada batas langkah yang aman.");
+        },
+      });
+      if (result.failed.length || result.fatalError) setSummary(result);
+      if (result.fatalError) {
+        setStatus(result.fatalError);
+        setStatusError(true);
+      } else if (result.stopped) {
+        setStatus(`Proses dihentikan setelah SEP aktif selesai. ${result.succeeded.length} SEP berhasil dikirim.`);
+      } else if (result.failed.length) {
+        setStatus(`Proses selesai: ${result.succeeded.length} SEP berhasil dan ${result.failed.length} SEP gagal.`);
+        setStatusError(true);
+      } else {
+        setStatus(`${result.succeeded.length} SEP selesai di-re-grouping dan terkirim.`);
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Re-grouping gagal.");
+      setStatusError(true);
     } finally {
       setRunning(false);
+      setPaused(false);
+      setPausePending(false);
+      setStopPending(false);
+      pauseRequested.current = false;
+      stopAfterCurrent.current = false;
     }
   }
 
+  function togglePause() {
+    if (paused || pausePending) {
+      pauseRequested.current = false;
+      setPaused(false);
+      setPausePending(false);
+      setStatus(stopPending ? "Menyelesaikan SEP aktif sebelum berhenti." : "Melanjutkan proses Re-grouping...");
+      return;
+    }
+    pauseRequested.current = true;
+    setPausePending(true);
+    setStatus("Menjeda setelah langkah aktif selesai...");
+  }
+
+  function stopSafely() {
+    stopAfterCurrent.current = true;
+    pauseRequested.current = false;
+    setPaused(false);
+    setPausePending(false);
+    setStopPending(true);
+    setStatus("SEP aktif akan diselesaikan hingga Terkirim, lalu proses berhenti.");
+  }
+
   const done = progress.filter((item) => item.status === "done").length;
+  const failed = progress.filter((item) => item.status === "failed").length;
+  const processed = done + failed;
   return <div className="space-y-3.5">
     <button onClick={running ? undefined : onBack} disabled={running} className="flex items-center gap-1 text-[11px] font-medium disabled:opacity-50" style={{ color: SLATE }}><ArrowLeft size={12} /> Kembali</button>
     <div className="rounded-lg px-3 py-2 flex items-center gap-2 text-[11.5px] font-semibold" style={{ backgroundColor: TEAL_SOFT, color: TEAL }}><RefreshCw size={13} /> Re-grouping</div>
@@ -474,7 +538,7 @@ function RegroupingStage({ onBack }: { onBack: () => void }) {
       <div className="mt-1.5 flex items-start justify-between gap-3 text-[10.5px]" style={{ color: parsed.invalid.length ? "#BA1A1A" : SLATE }}><span>{parsed.invalid.length ? `Format tidak dikenali: ${parsed.invalid.join(", ")}` : "Pisahkan SEP dengan baris baru, koma, atau titik koma."}</span><span className="shrink-0 tabular-nums">{parsed.seps.length} SEP</span></div>
     </div>
     {progress.length > 0 && <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${MIST_DARK}` }}>
-      <div className="flex items-center justify-between px-3 py-2 text-[10.5px] font-semibold" style={{ backgroundColor: MIST, color: SLATE }}><span>Progres</span><span className="tabular-nums">{done}/{progress.length}</span></div>
+      <div className="flex items-center justify-between gap-2 px-3 py-2 text-[10.5px] font-semibold" style={{ backgroundColor: MIST, color: SLATE }}><span>Progres</span><span className="tabular-nums">{processed}/{progress.length} · {done} berhasil{failed ? ` · ${failed} gagal` : ""}</span></div>
       <div className="max-h-48 overflow-y-auto divide-y" style={{ borderColor: MIST }}>
         {progress.map((item) => <div key={item.sep} className="flex items-start gap-2.5 px-3 py-2.5" style={{ backgroundColor: item.status === "failed" ? "#FFF1F0" : "#fff" }}>
           <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: item.status === "done" ? TEAL : item.status === "failed" ? "#BA1A1A" : item.status === "running" ? TEAL_SOFT : MIST, color: item.status === "running" ? TEAL : "#fff" }}>{item.status === "done" ? <Check size={10} /> : item.status === "failed" ? <X size={10} /> : item.status === "running" ? <RefreshCw size={10} className="animate-spin" /> : null}</span>
@@ -482,9 +546,28 @@ function RegroupingStage({ onBack }: { onBack: () => void }) {
         </div>)}
       </div>
     </div>}
-    {status && <p className="rounded-lg p-2.5 text-[10.5px] leading-relaxed" style={{ color: status.includes("selesai") ? TEAL : "#93000a", backgroundColor: status.includes("selesai") ? TEAL_SOFT : "#ffdad6" }}>{status}</p>}
-    <div className="flex justify-end gap-2">{running && <PanelButton variant="ghost" onClick={() => { cancelled.current = true; }} icon={X}>Hentikan</PanelButton>}<PanelButton onClick={start} icon={RefreshCw} disabled={running || !parsed.seps.length || Boolean(parsed.invalid.length)}>Re-grouping</PanelButton></div>
+    {status && <p className="rounded-lg p-2.5 text-[10.5px] leading-relaxed" style={{ color: statusError ? "#93000a" : TEAL, backgroundColor: statusError ? "#ffdad6" : TEAL_SOFT }}>{status}</p>}
+    <div className="flex justify-end gap-2">{running && <><PanelButton variant="ghost" onClick={togglePause} icon={paused || pausePending ? Play : Pause} disabled={stopPending}>{paused || pausePending ? "Lanjutkan" : "Jeda"}</PanelButton><PanelButton variant="ghost" onClick={stopSafely} icon={X} disabled={stopPending}>Hentikan</PanelButton></>}<PanelButton onClick={start} icon={RefreshCw} disabled={running || !parsed.seps.length || Boolean(parsed.invalid.length)}>Re-grouping</PanelButton></div>
+    {running && <p className="rounded-lg px-3 py-2 text-[10px] leading-relaxed" style={{ color: SLATE, backgroundColor: MIST }}><strong>Hentikan aman dilakukan.</strong> SEP yang sedang diproses akan diselesaikan hingga status Terkirim, lalu proses berhenti sebelum memulai SEP berikutnya. Proses tidak dihentikan di tengah jalan; jika e-Klaim atau jaringan bermasalah, SEP dicatat sebagai gagal.</p>}
+    {summary && <RegroupingSummaryModal result={summary} onClose={() => setSummary(null)} />}
   </div>;
+}
+
+function RegroupingSummaryModal({ result, onClose }: { result: RegroupingBatchResult; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  async function copyFailed() {
+    await navigator.clipboard.writeText(result.failed.map((item) => item.sep).join("\n"));
+    setCopied(true);
+  }
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"><div className="max-h-[85vh] w-full max-w-sm overflow-hidden rounded-xl bg-white shadow-xl">
+    <div className="flex items-start justify-between gap-3 border-b p-4" style={{ borderColor: MIST_DARK }}><div><p className="text-[14px] font-semibold" style={{ color: INK }}>Ringkasan Re-grouping</p><p className="mt-1 text-[10.5px]" style={{ color: SLATE }}>{result.succeeded.length} berhasil · {result.failed.length} gagal · {result.pending.length} belum diproses</p></div><button aria-label="Tutup ringkasan" onClick={onClose} className="rounded-md p-1 hover:bg-slate-100"><X size={15} color={SLATE} /></button></div>
+    <div className="max-h-[60vh] space-y-3 overflow-y-auto p-4">
+      {result.fatalError && <p className="rounded-lg p-2.5 text-[10.5px] leading-relaxed" style={{ color: "#93000a", backgroundColor: "#ffdad6" }}>{result.fatalError}</p>}
+      {result.failed.length > 0 && <div><div className="mb-2 flex items-center justify-between gap-2"><p className="text-[11px] font-semibold" style={{ color: INK }}>SEP gagal</p><button onClick={() => void copyFailed()} className="flex items-center gap-1 text-[10.5px] font-semibold" style={{ color: TEAL }}><Copy size={12} />{copied ? "Tersalin" : "Salin semua"}</button></div><div className="space-y-1.5">{result.failed.map((item) => <div key={item.sep} className="rounded-lg p-2.5" style={{ backgroundColor: "#FFF1F0" }}><p className="font-mono text-[10.5px] font-semibold" style={{ color: INK }}>{item.sep}</p><p className="mt-0.5 text-[9.5px]" style={{ color: "#93000a" }}>{item.step}: {item.error}</p></div>)}</div></div>}
+      {result.pending.length > 0 && <div><p className="mb-1.5 text-[11px] font-semibold" style={{ color: INK }}>Belum diproses</p><p className="whitespace-pre-wrap rounded-lg p-2.5 font-mono text-[10px]" style={{ color: SLATE, backgroundColor: MIST }}>{result.pending.join("\n")}</p></div>}
+    </div>
+    <div className="flex justify-end border-t p-3" style={{ borderColor: MIST_DARK }}><PanelButton onClick={onClose}>Tutup</PanelButton></div>
+  </div></div>;
 }
 
 function InputStage({ workflow, wf, inputMethod, setInputMethod, files, setFiles, linkUrl, setLinkUrl, resetFlow, processFiles }: { workflow: WorkflowId; wf: WorkflowMeta; inputMethod: "upload" | "link" | "tab"; setInputMethod: (method: "upload" | "link" | "tab") => void; files: File[]; setFiles: (files: File[]) => void; linkUrl: string; setLinkUrl: (url: string) => void; resetFlow: () => void; processFiles: () => void }) {

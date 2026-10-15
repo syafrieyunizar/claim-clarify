@@ -6,14 +6,17 @@ import { getProvider } from "../src/lib/ai/provider";
 import { getAdminProviderLabel, listClaimLibrary, manageClaimLibraryItem, normalizeAdminProviderKey, reviewClaimLibraryItem } from "../src/lib/ai/admin";
 import { appendAuditEntry, listAuditEntries, removeAuditEntry, replaceAuditEntries } from "../src/lib/audit/log";
 import { buildKnowledgeChunkUserMessage, formatKnowledgeContext, parseKnowledgeChunks, retrieveKnowledgeChunks } from "../src/lib/knowledge/chunks";
-import { parseSepInput } from "../src/lib/eklaim/regrouping";
+import { getEklaimHomeUrl, parseSepInput, runRegroupingBatch, type RegroupingProgress } from "../src/lib/eklaim/regrouping";
 import { captureActiveTabPdf, readLocalFileUrl } from "../src/lib/pdf/parse";
 import { analyzeReadmisiTexts } from "../src/workflows/readmisi";
 import { buildClaimChallengeUserMessage, buildRevisionUserMessage, buildStandardUserMessage, CLAIM_CHALLENGE_SYSTEM_PROMPT, GENERATED_ANSWER_SCHEMA, parseClaimChallengeAssessment, parseGeneratedAnswer, REVISION_SYSTEM_PROMPT, STANDARD_SYSTEM_PROMPT } from "../src/workflows/standard";
 import { buildStrictTemplateSystemPrompt, extractTemplatePlaceholders, hasStrictTemplatePlaceholders, matchTemplate, parseStrictTemplateAnswer, renderStrictTemplate, resolveTemplateSelection } from "../src/workflows/template";
 
 describe("workflow guards", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
   it("asks the model for a concise BPJS-ready answer", () => {
     expect(STANDARD_SYSTEM_PROMPT).toContain("5-7 kalimat, maksimal 130 kata");
@@ -137,6 +140,120 @@ describe("workflow guards", () => {
       seps: ["1709R0090626V007001", "1709R0090626V007002"],
       invalid: ["BAD"],
     });
+  });
+
+  it("builds the stable e-Klaim home URL from a fresh-login URL", () => {
+    expect(getEklaimHomeUrl("http://172.16.0.5/E-Klaim/index.php?success=1&rand=abc"))
+      .toBe("http://172.16.0.5/E-Klaim/index.php?0=padm&slpat_ch=y");
+  });
+
+  it("continues with the next SEP after a recoverable regrouping failure", async () => {
+    const failedSep = "1709R0090726V001111";
+    const successfulSep = "1709R0090726V002222";
+    const progress: RegroupingProgress[] = [];
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: TimerHandler) => {
+      if (typeof handler === "function") handler();
+      return 0;
+    }) as typeof setTimeout);
+    vi.stubGlobal("chrome", {
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 9, url: "http://172.16.0.5/E-Klaim/index.php?success=1&rand=abc" }]),
+        update: vi.fn().mockResolvedValue(undefined),
+      },
+      permissions: {
+        contains: vi.fn().mockResolvedValue(true),
+        request: vi.fn().mockResolvedValue(true),
+      },
+      scripting: {
+        executeScript: vi.fn().mockImplementation(async ({ args }: { args: [string, string, string] }) => {
+          const [action, sep] = args;
+          if (sep === failedSep && action === "open-admission") {
+            return [{ result: { ok: false, retry: false, message: "Admission tidak ditemukan." } }];
+          }
+          if (action === "read-grouping-marker") return [{ result: { ok: true, message: "Marker", marker: "lama" } }];
+          return [{ result: { ok: true, message: "OK" } }];
+        }),
+      },
+    });
+
+    const result = await runRegroupingBatch([failedSep, successfulSep], (next) => progress.push(next), {
+      isPauseRequested: () => false,
+      isStopAfterCurrentRequested: () => false,
+    });
+
+    expect(result.failed).toEqual([{ sep: failedSep, step: "Membuka admission", error: "Admission tidak ditemukan." }]);
+    expect(result.succeeded).toEqual([successfulSep]);
+    expect(result.pending).toEqual([]);
+    expect([...progress].reverse().find((item) => item.sep === failedSep)?.status).toBe("failed");
+    expect([...progress].reverse().find((item) => item.sep === successfulSep)?.status).toBe("done");
+  });
+
+  it("finishes the active SEP before honoring a stop request", async () => {
+    const firstSep = "1709R0090726V003333";
+    const secondSep = "1709R0090726V004444";
+    let stopRequested = false;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: TimerHandler) => {
+      if (typeof handler === "function") handler();
+      return 0;
+    }) as typeof setTimeout);
+    vi.stubGlobal("chrome", {
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 10, url: "http://172.16.0.5/E-Klaim/index.php?0=padm&slpat_ch=y" }]),
+        update: vi.fn().mockResolvedValue(undefined),
+      },
+      permissions: { contains: vi.fn().mockResolvedValue(true) },
+      scripting: {
+        executeScript: vi.fn().mockImplementation(async ({ args }: { args: [string, string, string] }) => {
+          const [action] = args;
+          if (action === "read-grouping-marker") return [{ result: { ok: true, message: "Marker", marker: "lama" } }];
+          return [{ result: { ok: true, message: "OK" } }];
+        }),
+      },
+    });
+
+    const result = await runRegroupingBatch([firstSep, secondSep], (next) => {
+      if (next.sep === firstSep && next.step === "Mencari SEP") stopRequested = true;
+    }, {
+      isPauseRequested: () => false,
+      isStopAfterCurrentRequested: () => stopRequested,
+    });
+
+    expect(result.stopped).toBe(true);
+    expect(result.succeeded).toEqual([firstSep]);
+    expect(result.pending).toEqual([secondSep]);
+  });
+
+  it("pauses at a step boundary and resumes the same SEP", async () => {
+    const sep = "1709R0090726V005555";
+    let pauseChecks = 0;
+    const pauseChanges: boolean[] = [];
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: TimerHandler) => {
+      if (typeof handler === "function") handler();
+      return 0;
+    }) as typeof setTimeout);
+    vi.stubGlobal("chrome", {
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 11, url: "http://172.16.0.5/E-Klaim/index.php?0=padm&slpat_ch=y" }]),
+        update: vi.fn().mockResolvedValue(undefined),
+      },
+      permissions: { contains: vi.fn().mockResolvedValue(true) },
+      scripting: {
+        executeScript: vi.fn().mockImplementation(async ({ args }: { args: [string, string, string] }) => {
+          const [action] = args;
+          if (action === "read-grouping-marker") return [{ result: { ok: true, message: "Marker", marker: "lama" } }];
+          return [{ result: { ok: true, message: "OK" } }];
+        }),
+      },
+    });
+
+    const result = await runRegroupingBatch([sep], () => undefined, {
+      isPauseRequested: () => pauseChecks++ === 0,
+      isStopAfterCurrentRequested: () => false,
+      onPauseChange: (paused) => pauseChanges.push(paused),
+    });
+
+    expect(result.succeeded).toEqual([sep]);
+    expect(pauseChanges.slice(0, 2)).toEqual([true, false]);
   });
 
   it("reads text from common provider response shapes", () => {
