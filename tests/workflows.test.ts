@@ -6,7 +6,7 @@ import { getProvider } from "../src/lib/ai/provider";
 import { getAdminProviderLabel, listClaimLibrary, manageClaimLibraryItem, normalizeAdminProviderKey, reviewClaimLibraryItem } from "../src/lib/ai/admin";
 import { appendAuditEntry, listAuditEntries, removeAuditEntry, replaceAuditEntries } from "../src/lib/audit/log";
 import { buildKnowledgeChunkUserMessage, formatKnowledgeContext, parseKnowledgeChunks, retrieveKnowledgeChunks } from "../src/lib/knowledge/chunks";
-import { getEklaimHomeUrl, parseSepInput, runRegroupingBatch, type RegroupingProgress } from "../src/lib/eklaim/regrouping";
+import { getEklaimHomeUrl, openRegroupingSepForReview, parseSepInput, runRegroupingBatch, type RegroupingProgress } from "../src/lib/eklaim/regrouping";
 import { captureActiveTabPdf, readLocalFileUrl } from "../src/lib/pdf/parse";
 import { analyzeReadmisiTexts } from "../src/workflows/readmisi";
 import { buildClaimChallengeUserMessage, buildRevisionUserMessage, buildStandardUserMessage, CLAIM_CHALLENGE_SYSTEM_PROMPT, GENERATED_ANSWER_SCHEMA, parseClaimChallengeAssessment, parseGeneratedAnswer, REVISION_SYSTEM_PROMPT, STANDARD_SYSTEM_PROMPT } from "../src/workflows/standard";
@@ -145,6 +145,30 @@ describe("workflow guards", () => {
   it("builds the stable e-Klaim home URL from a fresh-login URL", () => {
     expect(getEklaimHomeUrl("http://172.16.0.5/E-Klaim/index.php?success=1&rand=abc"))
       .toBe("http://172.16.0.5/E-Klaim/index.php?0=padm&slpat_ch=y");
+  });
+
+  it("opens a successful SEP for manual review and stops at the admission", async () => {
+    const sep = "1709R0090826V000106";
+    const update = vi.fn().mockResolvedValue(undefined);
+    const actions: string[] = [];
+    vi.stubGlobal("chrome", {
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 8, url: "http://172.16.0.5/E-Klaim/index.php?rand=abc" }]),
+        update,
+      },
+      permissions: { contains: vi.fn().mockResolvedValue(true) },
+      scripting: {
+        executeScript: vi.fn().mockImplementation(async ({ args }: { args: [string, string, string] }) => {
+          actions.push(args[0]);
+          return [{ result: { ok: true, message: "OK" } }];
+        }),
+      },
+    });
+
+    await openRegroupingSepForReview(sep);
+
+    expect(update).toHaveBeenCalledWith(8, { url: "http://172.16.0.5/E-Klaim/index.php?0=padm&slpat_ch=y" });
+    expect(actions).toEqual(["validate-home", "open-patient", "open-admission", "clear-lock"]);
   });
 
   it("continues with the next SEP after a recoverable regrouping failure", async () => {

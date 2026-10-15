@@ -11,7 +11,7 @@ import { buildKnowledgeChunkUserMessage, formatKnowledgeContext, KNOWLEDGE_CHUNK
 import { captureActiveTabPdf, parsePdfFile, parsePdfUrl } from "../lib/pdf/parse";
 import { redactSensitiveData } from "../lib/privacy/redact";
 import { getLocal, removeLocal, setLocal } from "../lib/storage/local";
-import { parseSepInput, runRegroupingBatch, type RegroupingBatchResult, type RegroupingProgress } from "../lib/eklaim/regrouping";
+import { openRegroupingSepForReview, parseSepInput, runRegroupingBatch, type RegroupingBatchResult, type RegroupingProgress } from "../lib/eklaim/regrouping";
 import { AMBER, AMBER_SOFT, INK, MIST, MIST_DARK, PAPER, PLUM, PLUM_SOFT, SLATE, TEAL, TEAL_SOFT } from "../theme";
 import type { AIConfig, AuditEntry, ClaimChallengeAssessment, GeneratedAnswer, KnowledgeChunk, Template, WorkflowId } from "../types";
 import { analyzeReadmisiTexts, hasMinimumReadmisiFiles } from "../workflows/readmisi";
@@ -436,7 +436,7 @@ function WorkflowCard({ id, active, onClick }: { id: WorkflowId; active: boolean
   return <button onClick={() => onClick(id)} className="w-full text-left rounded-xl p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.99]" style={{ border: `1.5px solid ${active ? wf.accent : MIST_DARK}`, backgroundColor: active ? wf.soft : "#fff" }}><div className="flex items-center justify-between"><span className="font-semibold text-[13.5px]" style={{ color: INK }}>{wf.label}</span><ChevronRight size={16} color={active ? wf.accent : SLATE} /></div><p className="text-[11.5px] mt-0.5" style={{ color: SLATE }}>{wf.desc}</p></button>;
 }
 
-function RegroupingStage({ onBack }: { onBack: () => void }) {
+export function RegroupingStage({ onBack }: { onBack: () => void }) {
   const [value, setValue] = useState("");
   const [progress, setProgress] = useState<RegroupingProgress[]>([]);
   const [running, setRunning] = useState(false);
@@ -446,6 +446,7 @@ function RegroupingStage({ onBack }: { onBack: () => void }) {
   const [status, setStatus] = useState("");
   const [statusError, setStatusError] = useState(false);
   const [summary, setSummary] = useState<RegroupingBatchResult | null>(null);
+  const [reviewingSep, setReviewingSep] = useState("");
   const pauseRequested = useRef(false);
   const stopAfterCurrent = useRef(false);
   const parsed = useMemo(() => parseSepInput(value), [value]);
@@ -526,15 +527,31 @@ function RegroupingStage({ onBack }: { onBack: () => void }) {
     setStatus("SEP aktif akan diselesaikan hingga Terkirim, lalu proses berhenti.");
   }
 
+  async function reviewSep(sep: string) {
+    setReviewingSep(sep);
+    setStatusError(false);
+    setStatus(`Membuka SEP ${sep} untuk pemeriksaan...`);
+    try {
+      await openRegroupingSepForReview(sep);
+      setStatus(`SEP ${sep} sudah dibuka. Otomatisasi berhenti; silakan periksa hasilnya secara manual.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "SEP gagal dibuka untuk pemeriksaan.");
+      setStatusError(true);
+    } finally {
+      setReviewingSep("");
+    }
+  }
+
   const done = progress.filter((item) => item.status === "done").length;
   const failed = progress.filter((item) => item.status === "failed").length;
   const processed = done + failed;
+  const busy = running || Boolean(reviewingSep);
   return <div className="space-y-3.5">
-    <button onClick={running ? undefined : onBack} disabled={running} className="flex items-center gap-1 text-[11px] font-medium disabled:opacity-50" style={{ color: SLATE }}><ArrowLeft size={12} /> Kembali</button>
+    <button onClick={busy ? undefined : onBack} disabled={busy} className="flex items-center gap-1 text-[11px] font-medium disabled:opacity-50" style={{ color: SLATE }}><ArrowLeft size={12} /> Kembali</button>
     <div className="rounded-lg px-3 py-2 flex items-center gap-2 text-[11.5px] font-semibold" style={{ backgroundColor: TEAL_SOFT, color: TEAL }}><RefreshCw size={13} /> Re-grouping</div>
     <div>
       <label htmlFor="regrouping-seps" className="text-[11px] font-semibold" style={{ color: INK }}>Nomor SEP</label>
-      <textarea id="regrouping-seps" value={value} onChange={(event) => setValue(event.target.value)} disabled={running} rows={7} spellCheck={false} placeholder={"1709R0090626V007001\n1709R0090626V007002"} className="mt-1.5 w-full resize-y rounded-lg p-3 font-mono text-[11.5px] leading-relaxed outline-none focus:ring-2 disabled:opacity-70" style={{ border: `1.5px solid ${parsed.invalid.length ? "#BA1A1A" : MIST_DARK}`, color: INK, backgroundColor: "#fff", minHeight: 150 }} />
+      <textarea id="regrouping-seps" value={value} onChange={(event) => setValue(event.target.value)} disabled={busy} rows={7} spellCheck={false} placeholder={"1709R0090626V007001\n1709R0090626V007002"} className="mt-1.5 w-full resize-y rounded-lg p-3 font-mono text-[11.5px] leading-relaxed outline-none focus:ring-2 disabled:opacity-70" style={{ border: `1.5px solid ${parsed.invalid.length ? "#BA1A1A" : MIST_DARK}`, color: INK, backgroundColor: "#fff", minHeight: 150 }} />
       <div className="mt-1.5 flex items-start justify-between gap-3 text-[10.5px]" style={{ color: parsed.invalid.length ? "#BA1A1A" : SLATE }}><span>{parsed.invalid.length ? `Format tidak dikenali: ${parsed.invalid.join(", ")}` : "Pisahkan SEP dengan baris baru, koma, atau titik koma."}</span><span className="shrink-0 tabular-nums">{parsed.seps.length} SEP</span></div>
     </div>
     {progress.length > 0 && <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${MIST_DARK}` }}>
@@ -543,11 +560,12 @@ function RegroupingStage({ onBack }: { onBack: () => void }) {
         {progress.map((item) => <div key={item.sep} className="flex items-start gap-2.5 px-3 py-2.5" style={{ backgroundColor: item.status === "failed" ? "#FFF1F0" : "#fff" }}>
           <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: item.status === "done" ? TEAL : item.status === "failed" ? "#BA1A1A" : item.status === "running" ? TEAL_SOFT : MIST, color: item.status === "running" ? TEAL : "#fff" }}>{item.status === "done" ? <Check size={10} /> : item.status === "failed" ? <X size={10} /> : item.status === "running" ? <RefreshCw size={10} className="animate-spin" /> : null}</span>
           <div className="min-w-0 flex-1"><p className="truncate font-mono text-[10.5px] font-semibold" style={{ color: INK }}>{item.sep}</p><p className="text-[10px] leading-snug" style={{ color: item.status === "failed" ? "#BA1A1A" : SLATE }}>{item.error || item.step}</p></div>
+          {item.status === "done" && <button type="button" aria-label={`Periksa SEP ${item.sep} di e-Klaim`} title="Periksa SEP di e-Klaim" onClick={() => void reviewSep(item.sep)} disabled={busy} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-slate-100 focus:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-40" style={{ color: TEAL }}><Eye size={16} aria-hidden /></button>}
         </div>)}
       </div>
     </div>}
     {status && <p className="rounded-lg p-2.5 text-[10.5px] leading-relaxed" style={{ color: statusError ? "#93000a" : TEAL, backgroundColor: statusError ? "#ffdad6" : TEAL_SOFT }}>{status}</p>}
-    <div className="flex justify-end gap-2">{running && <><PanelButton variant="ghost" onClick={togglePause} icon={paused || pausePending ? Play : Pause} disabled={stopPending}>{paused || pausePending ? "Lanjutkan" : "Jeda"}</PanelButton><PanelButton variant="ghost" onClick={stopSafely} icon={X} disabled={stopPending}>Hentikan</PanelButton></>}<PanelButton onClick={start} icon={RefreshCw} disabled={running || !parsed.seps.length || Boolean(parsed.invalid.length)}>Re-grouping</PanelButton></div>
+    <div className="flex justify-end gap-2">{running && <><PanelButton variant="ghost" onClick={togglePause} icon={paused || pausePending ? Play : Pause} disabled={stopPending}>{paused || pausePending ? "Lanjutkan" : "Jeda"}</PanelButton><PanelButton variant="ghost" onClick={stopSafely} icon={X} disabled={stopPending}>Hentikan</PanelButton></>}<PanelButton onClick={start} icon={RefreshCw} disabled={busy || !parsed.seps.length || Boolean(parsed.invalid.length)}>Re-grouping</PanelButton></div>
     {running && <p className="rounded-lg px-3 py-2 text-[10px] leading-relaxed" style={{ color: SLATE, backgroundColor: MIST }}><strong>Hentikan aman dilakukan.</strong> SEP yang sedang diproses akan diselesaikan hingga status Terkirim, lalu proses berhenti sebelum memulai SEP berikutnya. Proses tidak dihentikan di tengah jalan; jika e-Klaim atau jaringan bermasalah, SEP dicatat sebagai gagal.</p>}
     {summary && <RegroupingSummaryModal result={summary} onClose={() => setSummary(null)} />}
   </div>;

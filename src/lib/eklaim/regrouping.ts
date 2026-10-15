@@ -81,6 +81,32 @@ export function getEklaimHomeUrl(currentUrl: string) {
   return new URL("index.php?0=padm&slpat_ch=y", currentUrl).toString();
 }
 
+export async function openRegroupingSepForReview(sep: string) {
+  if (typeof chrome === "undefined" || !chrome.tabs || !chrome.scripting) {
+    throw new Error("Pemeriksaan SEP hanya tersedia di Chrome Extension.");
+  }
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || tab.id === undefined || !tab.url || !/^https?:/i.test(tab.url) || !/\/e-klaim(?:\/|$)/i.test(new URL(tab.url).pathname)) {
+    throw new Error("Buka tab e-Klaim terlebih dahulu.");
+  }
+
+  const originPermission = { origins: [`${new URL(tab.url).origin}/*`] };
+  if (chrome.permissions && !(await chrome.permissions.contains(originPermission))) {
+    const granted = await chrome.permissions.request(originPermission);
+    if (!granted) throw new Error("Izin mengakses halaman e-Klaim ditolak.");
+  }
+
+  try {
+    await chrome.tabs.update(tab.id, { url: getEklaimHomeUrl(tab.url) });
+    await runStep(tab.id, "validate-home", sep, 30_000);
+    await runStep(tab.id, "open-patient", sep, 20_000);
+    await runStep(tab.id, "open-admission", sep, 30_000);
+  } finally {
+    await clearPageLock(tab.id);
+  }
+}
+
 export async function runRegroupingBatch(
   seps: string[],
   onProgress: (progress: RegroupingProgress) => void,
@@ -91,7 +117,7 @@ export async function runRegroupingBatch(
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab.id === undefined || !tab.url || !/^https?:/i.test(tab.url)) {
+  if (!tab || tab.id === undefined || !tab.url || !/^https?:/i.test(tab.url)) {
     throw new Error("Buka halaman awal e-Klaim pada tab aktif terlebih dahulu.");
   }
 
