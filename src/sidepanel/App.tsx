@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowLeft, Bot, Check, ChevronDown, ChevronRight, ClipboardList, Copy, Eye, EyeOff,
+  ArrowLeft, Bot, Calculator, Check, ChevronDown, ChevronRight, ClipboardList, Copy, Eye, EyeOff,
   DatabaseBackup, FileText, FolderOpen, Globe, History, KeyRound, Layers, Link2, Plus, RefreshCw,
   Pause, Pencil, Play, Scale, Search, Server, Settings, ShieldCheck, Stethoscope, Tag, Trash2, Upload, Download, Users, X, type LucideIcon,
 } from "lucide-react";
@@ -12,8 +12,9 @@ import { captureActiveTabPdf, parsePdfFile, parsePdfUrl } from "../lib/pdf/parse
 import { redactSensitiveData } from "../lib/privacy/redact";
 import { getLocal, removeLocal, setLocal } from "../lib/storage/local";
 import { openRegroupingSepForReview, parseSepInput, runRegroupingBatch, type RegroupingBatchResult, type RegroupingProgress } from "../lib/eklaim/regrouping";
+import { applyHospitalCosts, buildCostMappingUserMessage, COST_MAPPING_SCHEMA, COST_MAPPING_SYSTEM_PROMPT, EKLAIM_COST_FIELDS, formatRupiah, parseCostMappingResponse, parseHospitalCostText, type HospitalCostPlan } from "../lib/eklaim/costCorrection";
 import { AMBER, AMBER_SOFT, INK, MIST, MIST_DARK, PAPER, PLUM, PLUM_SOFT, SLATE, TEAL, TEAL_SOFT } from "../theme";
-import type { AIConfig, AuditEntry, ClaimChallengeAssessment, GeneratedAnswer, KnowledgeChunk, Template, WorkflowId } from "../types";
+import type { AIConfig, AuditEntry, AuditWorkflowId, ClaimChallengeAssessment, GeneratedAnswer, KnowledgeChunk, Template, WorkflowId } from "../types";
 import { analyzeReadmisiTexts, hasMinimumReadmisiFiles } from "../workflows/readmisi";
 import { buildClaimChallengeUserMessage, buildRevisionUserMessage, buildStandardUserMessage, CLAIM_CHALLENGE_SCHEMA, CLAIM_CHALLENGE_SYSTEM_PROMPT, GENERATED_ANSWER_SCHEMA, parseClaimChallengeAssessment, parseGeneratedAnswer, REVISION_SYSTEM_PROMPT, STANDARD_SYSTEM_PROMPT } from "../workflows/standard";
 import { buildStrictTemplateSystemPrompt, hasStrictTemplatePlaceholders, parseStrictTemplateAnswer, resolveTemplateSelection, STRICT_TEMPLATE_SCHEMA } from "../workflows/template";
@@ -32,6 +33,10 @@ const WORKFLOWS: Record<WorkflowId, WorkflowMeta> = {
   standard: { label: "Klaim Standar", accent: TEAL, soft: TEAL_SOFT, desc: "Satu kasus pending, jawab langsung." },
   readmisi: { label: "Kasus Readmisi", accent: PLUM, soft: PLUM_SOFT, desc: "Analisis 2 episode rawat atau lebih." },
   template: { label: "Template Kustom", accent: AMBER, soft: AMBER_SOFT, desc: "Output sesuai kata kunci milikmu." },
+};
+const AUDIT_WORKFLOWS: Record<AuditWorkflowId, WorkflowMeta> = {
+  ...WORKFLOWS,
+  "cost-correction": { label: "Perbaikan Biaya RS", accent: TEAL, soft: TEAL_SOFT, desc: "Pemetaan biaya ke tarif e-Klaim." },
 };
 const VISIBLE_WORKFLOWS: WorkflowId[] = ["standard", "readmisi"];
 const DEFAULT_AI: AIConfig = { source: "admin", provider: "anthropic", endpoint: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-5", apiKey: "", adminSession: null };
@@ -84,7 +89,7 @@ function mergeTemplates(shared: Template[], local: Template[]) {
 
 export default function App() {
   const [view, setView] = useState<"home" | "settings">("home");
-  const [automation, setAutomation] = useState<"regrouping" | null>(null);
+  const [automation, setAutomation] = useState<"regrouping" | "cost-correction" | null>(null);
   const [settingsTab, setSettingsTab] = useState<"ai" | "kb" | "template" | "history">("ai");
   const [workflow, setWorkflow] = useState<WorkflowId | null>(null);
   const [stage, setStage] = useState<"select" | "input" | "processing" | "question" | "generating" | "output">("select");
@@ -399,9 +404,9 @@ export default function App() {
             <div className="flex flex-col flex-1">
               {!automation && workflow && wf && <StepDots steps={steps} activeIndex={stageIndex} accent={wf.accent} />}
               <div className="flex-1 p-4 overflow-y-auto" style={{ minHeight: 420 }}>
-                {automation ? <RegroupingStage onBack={() => setAutomation(null)} /> : <>
+                {automation === "regrouping" ? <RegroupingStage onBack={() => setAutomation(null)} /> : automation === "cost-correction" ? <CostCorrectionStage aiConfig={aiConfig} onBack={() => setAutomation(null)} onAuditAdded={(entry) => setHistory((current) => [entry, ...current].slice(0, 200))} /> : <>
                   {inputReference && ["question", "generating", "output"].includes(stage) && <ActiveFileLabel inputReference={inputReference} />}
-                  {stage === "select" && <WorkflowSelect workflow={workflow} selectWorkflow={(id) => { setWorkflow(id); setStage("input"); }} selectAutomation={() => setAutomation("regrouping")} />}
+                  {stage === "select" && <WorkflowSelect workflow={workflow} selectWorkflow={(id) => { setWorkflow(id); setStage("input"); }} selectAutomation={setAutomation} />}
                   {stage === "input" && workflow && wf && <InputStage workflow={workflow} wf={wf} inputMethod={inputMethod} setInputMethod={setInputMethod} files={files} setFiles={setFiles} linkUrl={linkUrl} setLinkUrl={setLinkUrl} resetFlow={resetFlow} processFiles={processFiles} />}
                   {stage === "processing" && wf && <Processing accent={wf.accent} label="Membaca rekam medis..." />}
                   {stage === "generating" && wf && <Processing accent={wf.accent} label={`${generatingLabel} ${generateSeconds}s`} />}
@@ -427,13 +432,122 @@ function StepDots({ steps, activeIndex, accent }: { steps: string[]; activeIndex
   return <div className="flex items-center gap-1.5 px-4 py-2.5" style={{ borderBottom: `1px solid ${MIST}` }}>{steps.map((step, i) => <div key={step} className="flex items-center gap-1.5 flex-1 min-w-0"><div className="flex items-center justify-center rounded-full text-[10px] font-semibold shrink-0" style={{ width: 18, height: 18, backgroundColor: i <= activeIndex ? accent : MIST, color: i <= activeIndex ? "#fff" : SLATE }}>{i < activeIndex ? <Check size={11} /> : i + 1}</div><span className="text-[10.5px] font-medium truncate" style={{ color: i <= activeIndex ? INK : SLATE }}>{step}</span>{i < steps.length - 1 && <div className="h-px flex-1" style={{ backgroundColor: i < activeIndex ? accent : MIST_DARK }} />}</div>)}</div>;
 }
 
-function WorkflowSelect({ workflow, selectWorkflow, selectAutomation }: { workflow: WorkflowId | null; selectWorkflow: (id: WorkflowId) => void; selectAutomation: () => void }) {
-  return <div className="space-y-2.5"><p className="text-[11.5px] leading-relaxed" style={{ color: SLATE }}>Asisten pending klaim BPJS untuk membantu menyusun jawaban berdasarkan rekam medis dan knowledge yang tersimpan.</p><p className="text-[12px] font-semibold mb-1" style={{ color: SLATE }}>Pilih jenis kasus</p>{VISIBLE_WORKFLOWS.map((id) => <WorkflowCard key={id} id={id} active={workflow === id} onClick={selectWorkflow} />)}<div className="pt-2"><p className="text-[12px] font-semibold mb-2" style={{ color: SLATE }}>Pilih jenis otomatisasi</p><button onClick={selectAutomation} className="w-full text-left rounded-xl p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.99]" style={{ border: `1.5px solid ${MIST_DARK}`, backgroundColor: "#fff" }}><div className="flex items-center justify-between"><div className="flex items-center gap-2"><RefreshCw size={15} color={TEAL} /><span className="font-semibold text-[13.5px]" style={{ color: INK }}>Re-grouping</span></div><ChevronRight size={16} color={SLATE} /></div><p className="text-[11.5px] mt-1" style={{ color: SLATE }}>Proses grouping ulang beberapa SEP secara berurutan.</p></button></div></div>;
+function WorkflowSelect({ workflow, selectWorkflow, selectAutomation }: { workflow: WorkflowId | null; selectWorkflow: (id: WorkflowId) => void; selectAutomation: (id: "regrouping" | "cost-correction") => void }) {
+  const automations = [
+    { id: "regrouping" as const, label: "Re-grouping", description: "Proses grouping ulang beberapa SEP secara berurutan.", icon: RefreshCw },
+    { id: "cost-correction" as const, label: "Perbaikan Biaya", description: "Petakan rincian biaya RS ke kolom tarif e-Klaim.", icon: Calculator },
+  ];
+  return <div className="space-y-2.5"><p className="text-[11.5px] leading-relaxed" style={{ color: SLATE }}>Asisten pending klaim BPJS untuk membantu menyusun jawaban berdasarkan rekam medis dan knowledge yang tersimpan.</p><p className="text-[12px] font-semibold mb-1" style={{ color: SLATE }}>Pilih jenis kasus</p>{VISIBLE_WORKFLOWS.map((id) => <WorkflowCard key={id} id={id} active={workflow === id} onClick={selectWorkflow} />)}<div className="pt-2 space-y-2"><p className="text-[12px] font-semibold" style={{ color: SLATE }}>Pilih jenis otomatisasi</p>{automations.map((automation) => <button key={automation.id} onClick={() => selectAutomation(automation.id)} className="w-full min-h-11 text-left rounded-xl p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.99]" style={{ border: `1.5px solid ${MIST_DARK}`, backgroundColor: "#fff" }}><div className="flex items-center justify-between"><div className="flex items-center gap-2"><automation.icon size={15} color={TEAL} /><span className="font-semibold text-[13.5px]" style={{ color: INK }}>{automation.label}</span></div><ChevronRight size={16} color={SLATE} /></div><p className="text-[11.5px] mt-1" style={{ color: SLATE }}>{automation.description}</p></button>)}</div></div>;
 }
 
 function WorkflowCard({ id, active, onClick }: { id: WorkflowId; active: boolean; onClick: (id: WorkflowId) => void }) {
   const wf = WORKFLOWS[id];
   return <button onClick={() => onClick(id)} className="w-full text-left rounded-xl p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.99]" style={{ border: `1.5px solid ${active ? wf.accent : MIST_DARK}`, backgroundColor: active ? wf.soft : "#fff" }}><div className="flex items-center justify-between"><span className="font-semibold text-[13.5px]" style={{ color: INK }}>{wf.label}</span><ChevronRight size={16} color={active ? wf.accent : SLATE} /></div><p className="text-[11.5px] mt-0.5" style={{ color: SLATE }}>{wf.desc}</p></button>;
+}
+
+export function CostCorrectionStage({ aiConfig, onBack, onAuditAdded }: { aiConfig: AIConfig; onBack: () => void; onAuditAdded: (entry: AuditEntry) => void }) {
+  const [value, setValue] = useState("");
+  const [plan, setPlan] = useState<HospitalCostPlan | null>(null);
+  const [mapping, setMapping] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [status, setStatus] = useState("");
+  const [statusError, setStatusError] = useState(false);
+  const parsedState = useMemo(() => {
+    if (!value.trim()) return { parsed: null, error: "" };
+    try {
+      return { parsed: parseHospitalCostText(value), error: "" };
+    } catch (error) {
+      return { parsed: null, error: error instanceof Error ? error.message : "Rincian biaya tidak dapat dibaca." };
+    }
+  }, [value]);
+  const busy = mapping || applying;
+  const mappedFields = plan ? EKLAIM_COST_FIELDS.filter((field) => plan.totals[field.key] > 0) : [];
+
+  async function mapCosts() {
+    if (!parsedState.parsed) return;
+    setMapping(true);
+    setPlan(null);
+    setStatus("AI sedang memetakan deskripsi layanan...");
+    setStatusError(false);
+    try {
+      const response = await getProvider(aiConfig).send({
+        systemPrompt: COST_MAPPING_SYSTEM_PROMPT,
+        userMessage: buildCostMappingUserMessage(parsedState.parsed.lines),
+        context: [],
+        responseJson: true,
+        responseSchema: COST_MAPPING_SCHEMA,
+      }, aiConfig);
+      const nextPlan = parseCostMappingResponse(response.text, parsedState.parsed);
+      setPlan(nextPlan);
+      setStatus("Pemetaan selesai. Periksa kategori dan total sebelum diterapkan.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Pemetaan biaya oleh AI gagal.");
+      setStatusError(true);
+    } finally {
+      setMapping(false);
+    }
+  }
+
+  async function applyPlan() {
+    if (!plan) return;
+    setConfirmOpen(false);
+    setApplying(true);
+    setStatus("Membuka form biaya dan menulis nominal ke e-Klaim...");
+    setStatusError(false);
+    try {
+      const result = await applyHospitalCosts(plan);
+      const mappedSummary = mappedFields.map((field) => `${field.label} ${formatRupiah(plan.totals[field.key])}`).join("; ");
+      const entry: AuditEntry = {
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        workflow: "cost-correction",
+        inputReference: result.sep,
+        output: {
+          ringkasan: `${plan.lines.length} rincian biaya dipetakan ke ${result.updatedFields} kolom e-Klaim dengan total ${formatRupiah(result.total)}.`,
+          jawabanPending: mappedSummary,
+          sources: ["Pemetaan AI Perbaikan Biaya RS"],
+        },
+      };
+      await appendAuditEntry(entry);
+      onAuditAdded(entry);
+      setStatus(`Biaya ${formatRupiah(result.total)} sudah diisikan pada ${result.sep}. Periksa form e-Klaim, lalu simpan atau finalisasi secara manual.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Biaya gagal diterapkan ke e-Klaim.");
+      setStatusError(true);
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  function updateValue(next: string) {
+    setValue(next);
+    setPlan(null);
+    setStatus("");
+    setStatusError(false);
+  }
+
+  return <div className="space-y-3.5">
+    <button onClick={busy ? undefined : onBack} disabled={busy} className="flex min-h-11 items-center gap-1 text-[11px] font-medium disabled:opacity-50" style={{ color: SLATE }}><ArrowLeft size={12} /> Kembali</button>
+    <div className="rounded-lg px-3 py-2 flex items-center gap-2 text-[11.5px] font-semibold" style={{ backgroundColor: TEAL_SOFT, color: TEAL }}><Calculator size={13} /> Perbaikan Biaya RS</div>
+    <div>
+      <label htmlFor="hospital-costs" className="text-[11px] font-semibold" style={{ color: INK }}>Rincian biaya pelayanan</label>
+      <textarea id="hospital-costs" value={value} onChange={(event) => updateValue(event.target.value)} disabled={busy} rows={10} spellCheck={false} placeholder={"No Deskripsi Layanan Total\n1 Kamar/Akomodasi Rp. 2,000,000\n2 Keperawatan Rp. 600,000\n3 Tindakan Keperawatan & Konsultasi IGD Rp. 666,700\nSemua Total Biaya Pelayanan : Rp. 3,266,700"} className="mt-1.5 w-full resize-y rounded-lg p-3 font-mono text-[11px] leading-relaxed outline-none focus:ring-2 disabled:opacity-70" style={{ border: `1.5px solid ${parsedState.error ? "#BA1A1A" : MIST_DARK}`, color: INK, backgroundColor: "#fff", minHeight: 210 }} />
+      <p className="mt-1.5 text-[10.5px] leading-relaxed" role={parsedState.error ? "alert" : undefined} style={{ color: parsedState.error ? "#BA1A1A" : SLATE }}>{parsedState.error || "Sertakan baris total. Angka dihitung lokal; AI hanya memilih kategori e-Klaim."}</p>
+    </div>
+    {parsedState.parsed && !plan && <div className="flex items-center justify-between rounded-lg px-3 py-2 text-[10.5px]" style={{ backgroundColor: MIST, color: SLATE }}><span>{parsedState.parsed.lines.length} rincian terbaca</span><strong className="tabular-nums" style={{ color: INK }}>{formatRupiah(parsedState.parsed.calculatedTotal)}</strong></div>}
+    {plan && <section className="overflow-hidden rounded-lg" style={{ border: `1px solid ${MIST_DARK}` }}>
+      <div className="flex items-center justify-between gap-2 px-3 py-2" style={{ backgroundColor: MIST }}><div><p className="text-[11px] font-semibold" style={{ color: INK }}>Preview pemetaan</p><p className="text-[9.5px]" style={{ color: SLATE }}>{plan.lines.length} rincian · {mappedFields.length} kolom terisi</p></div><strong className="text-[11px] tabular-nums" style={{ color: TEAL }}>{formatRupiah(plan.total)}</strong></div>
+      <div className="divide-y" style={{ borderColor: MIST }}>{mappedFields.map((field) => {
+        const sourceLines = plan.mappings.filter((mapping) => mapping.category === field.key).map((mapping) => plan.lines.find((line) => line.id === mapping.lineId)).filter((line): line is NonNullable<typeof line> => Boolean(line));
+        return <div key={field.key} className="px-3 py-2.5"><div className="flex items-start justify-between gap-3"><p className="text-[10.5px] font-semibold" style={{ color: INK }}>{field.label}</p><p className="shrink-0 text-[10.5px] font-semibold tabular-nums" style={{ color: TEAL }}>{formatRupiah(plan.totals[field.key])}</p></div><p className="mt-1 text-[9.5px] leading-relaxed" style={{ color: SLATE }}>{sourceLines.map((line) => `${line.description} (${formatRupiah(line.amount)})`).join(" + ")}</p></div>;
+      })}</div>
+    </section>}
+    {status && <p aria-live="polite" className="rounded-lg p-2.5 text-[10.5px] leading-relaxed" style={{ color: statusError ? "#93000a" : TEAL, backgroundColor: statusError ? "#ffdad6" : TEAL_SOFT }}>{status}</p>}
+    {!plan ? <PanelButton onClick={() => void mapCosts()} icon={Calculator} className="w-full" disabled={busy || !parsedState.parsed}>Petakan Biaya dengan AI</PanelButton> : <div className="grid grid-cols-2 gap-2"><PanelButton variant="ghost" onClick={() => { setPlan(null); setStatus(""); }} disabled={busy}>Ubah Data</PanelButton><PanelButton onClick={() => setConfirmOpen(true)} icon={Calculator} disabled={busy}>Terapkan ke e-Klaim</PanelButton></div>}
+    <p className="rounded-lg px-3 py-2 text-[10px] leading-relaxed" style={{ color: SLATE, backgroundColor: MIST }}>Penerapan akan mengganti seluruh 18 kolom tarif sesuai preview, termasuk mengisi nol pada kategori yang tidak tercantum. Ekstensi berhenti sebelum simpan atau finalisasi agar hasil dapat diperiksa.</p>
+    {confirmOpen && plan && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"><div className="w-full max-w-sm rounded-xl bg-white p-4 shadow-xl"><div className="flex items-start justify-between gap-3"><div><p className="text-[14px] font-semibold" style={{ color: INK }}>Terapkan biaya ke e-Klaim?</p><p className="mt-1 text-[10.5px] leading-relaxed" style={{ color: SLATE }}>Total {formatRupiah(plan.total)} akan mengganti seluruh kolom tarif pada klaim yang sedang dibuka. Jika diperlukan, ekstensi membuka Edit Ulang Klaim terlebih dahulu.</p></div><button aria-label="Tutup konfirmasi" onClick={() => setConfirmOpen(false)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-slate-100"><X size={15} color={SLATE} /></button></div><div className="mt-4 grid grid-cols-2 gap-2"><PanelButton variant="ghost" onClick={() => setConfirmOpen(false)}>Batal</PanelButton><PanelButton onClick={() => void applyPlan()} accent={TEAL}>Terapkan Biaya</PanelButton></div></div></div>}
+  </div>;
 }
 
 export function RegroupingStage({ onBack }: { onBack: () => void }) {
@@ -1061,7 +1175,7 @@ function SettingsView({ aiConfig, setAiConfig, settingsTab, setSettingsTab, temp
     </div>}
     {settingsTab === "kb" && <div className="space-y-4"><LibraryScopeTabs active={knowledgeLibraryTab} mineLabel="Knowledge Saya" sharedLabel="Knowledge Bersama" onChange={(tab) => { setKnowledgeLibraryTab(tab); setKnowledgeQuery(""); }} /><div className={knowledgeLibraryTab === "shared" ? "block" : "hidden"}><SharedKnowledgeLibrary chunks={filteredSharedKnowledgeChunks} disabledIds={disabledSharedKnowledge} onToggle={toggleSharedKnowledge} query={knowledgeQuery} setQuery={setKnowledgeQuery} status={libraryStatus} /></div><div className={knowledgeLibraryTab === "mine" ? "space-y-3" : "hidden"}><p className="text-[11px]" style={{ color: SLATE }}>Upload dokumen knowledge akan diproses AI menjadi draft chunk, atau tulis manual. Saat generate kasus hanya chunk relevan yang dikirim ke AI.</p><SharedLibrarySearch value={knowledgeQuery} onChange={setKnowledgeQuery} placeholder="Cari knowledge saya..." /><div className="grid grid-cols-2 gap-2"><PanelButton onClick={() => setManualOpen(true)} icon={Plus}>Tulis Manual</PanelButton><PanelButton onClick={() => void submitLocalKnowledgeForReview()} variant="ghost" icon={Upload}>Ajukan ke Admin</PanelButton></div><div className="flex gap-2"><label className="flex-1"><input type="file" accept="application/pdf,text/plain,.txt,.md" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadKnowledge(file).catch((error) => setKnowledgeStatus(error instanceof Error ? error.message : "Knowledge gagal diproses.")); }} /><span className="flex items-center justify-center gap-1.5 rounded-lg text-[12.5px] font-semibold px-3.5 py-2.5" style={{ color: INK, border: `1.5px solid ${MIST_DARK}` }}><Upload size={14} />Upload & Chunk</span></label><PanelButton variant="ghost" className="flex-1" icon={Trash2} disabled={!knowledgeChunks.length} onClick={() => setKnowledgeDelete({ id: "*", label: `${knowledgeChunks.length} knowledge chunk` })}>Hapus Chunk</PanelButton></div>{knowledgeStatus && <p className="text-[10.5px] rounded-lg p-2" style={{ color: SLATE, backgroundColor: MIST }}>{knowledgeStatus}</p>}{draftChunks.length > 0 && <div className="space-y-2"><div className="flex items-center justify-between"><p className="text-[11px] font-semibold" style={{ color: SLATE }}>Draft chunk, review dulu</p><PanelButton onClick={confirmDraftChunks} className="px-2 py-1 text-[11px]">Simpan</PanelButton></div>{draftChunks.map((chunk) => <KnowledgeChunkCard key={chunk.id} chunk={chunk} onChange={(patch) => updateDraftChunk(chunk.id, patch)} onRemove={() => removeDraftChunk(chunk.id)} />)}</div>}<p className="text-[10.5px]" style={{ color: SLATE }}>{knowledgeChunks.filter((chunk) => chunk.active).length} chunk aktif dari {knowledgeChunks.length} total.</p><div className="space-y-2">{filteredKnowledgeChunks.map((chunk) => <KnowledgeChunkCard key={chunk.id} chunk={chunk} onChange={(patch) => updateSavedChunk(chunk.id, patch)} onRemove={() => setKnowledgeDelete({ id: chunk.id, label: chunk.title || chunk.source || "Tanpa judul" })} />)}{!filteredKnowledgeChunks.length && <p className="text-[10.5px]" style={{ color: SLATE }}>Belum ada chunk yang cocok.</p>}</div>{manualOpen && <ManualKnowledgeModal chunk={manualChunk} onChange={(patch) => setManualChunk({ ...manualChunk, ...patch })} onReset={() => setManualChunk(createEmptyManualChunk())} onClose={() => setManualOpen(false)} onSave={addManualChunk} />}{knowledgeDelete && <DeleteKnowledgeModal label={knowledgeDelete.label} all={knowledgeDelete.id === "*"} onCancel={() => setKnowledgeDelete(null)} onConfirm={() => void confirmKnowledgeDelete()} />}</div></div>}
     {settingsTab === "template" && <div className="space-y-4"><LibraryScopeTabs active={templateLibraryTab} mineLabel="Template Saya" sharedLabel="Template Bersama" onChange={(tab) => { setTemplateLibraryTab(tab); setTemplateQuery(""); }} /><div className={templateLibraryTab === "shared" ? "block" : "hidden"}><SharedTemplateLibrary templates={filteredSharedTemplates} disabledIds={disabledSharedTemplates} onToggle={toggleSharedTemplate} query={templateQuery} setQuery={setTemplateQuery} status={libraryStatus} /></div><div className={templateLibraryTab === "mine" ? "space-y-3" : "hidden"}><p className="text-[11px]" style={{ color: SLATE }}>Buat template berdasarkan kata kunci untuk mengatur format dan gaya jawaban pending sesuai kebutuhan.</p><SharedLibrarySearch value={templateQuery} onChange={setTemplateQuery} placeholder="Cari template saya..." /><div className="grid grid-cols-2 gap-2"><PanelButton icon={Plus} onClick={() => setTemplateOpen(true)}>Tambah Template</PanelButton><PanelButton onClick={() => void submitLocalTemplatesForReview()} variant="ghost" icon={Upload}>Ajukan ke Admin</PanelButton></div>{knowledgeStatus && <p className="text-[10.5px] rounded-lg p-2" style={{ color: SLATE, backgroundColor: MIST }}>{knowledgeStatus}</p>}{filteredTemplates.map((template) => <div key={template.keyword} className="rounded-lg p-2.5" style={{ backgroundColor: MIST }}><button onClick={() => setExpandedTemplate(expandedTemplate === template.keyword ? "" : template.keyword)} className="w-full flex items-center gap-2 text-left"><span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: AMBER_SOFT, color: AMBER }}>{template.keyword}</span><p className="text-[10.5px] flex-1 truncate" style={{ color: SLATE }}>{template.note || template.instruction.slice(0, 72)}</p><ChevronDown size={13} color={SLATE} /></button>{expandedTemplate === template.keyword && <div className="mt-2 space-y-2">{editingTemplate?.keyword === template.keyword ? <><input value={editingTemplate.keyword} onChange={(event) => setEditingTemplate({ ...editingTemplate, keyword: event.target.value })} className="w-full rounded-lg px-2 py-1.5 text-[11px] outline-none" /><textarea value={editingTemplate.instruction} onChange={(event) => setEditingTemplate({ ...editingTemplate, note: event.target.value.slice(0, 80), instruction: event.target.value })} rows={4} className="w-full rounded-lg px-2 py-1.5 text-[11px] outline-none resize-none" /><div className="flex gap-2"><PanelButton className="flex-1" onClick={() => saveTemplate(editingTemplate)}>Simpan</PanelButton><PanelButton className="flex-1" variant="ghost" onClick={() => setEditingTemplate(null)}>Batal</PanelButton></div></> : <><p className="text-[11px] leading-relaxed whitespace-pre-wrap" style={{ color: INK }}>{template.instruction}</p><div className="flex gap-2"><PanelButton className="flex-1" variant="ghost" onClick={() => setEditingTemplate(template)}>Edit</PanelButton><PanelButton className="flex-1" variant="ghost" icon={Trash2} onClick={() => void removeTemplate(template.keyword)}>Hapus</PanelButton></div></>}</div>}</div>)}{!filteredTemplates.length && <p className="text-[11px]" style={{ color: SLATE }}>Template tidak ditemukan.</p>}{templateOpen && <TemplateModal draft={draft} setDraft={setDraft} onClose={() => setTemplateOpen(false)} onSave={addTemplate} />}</div></div>}
-    {settingsTab === "history" && <div className="space-y-3">{selectedHistory ? <HistoryDetail entry={selectedHistory} onBack={() => setSelectedHistory(null)} /> : <><div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ backgroundColor: MIST }}><Search size={13} color={SLATE} /><input value={query} onChange={(event) => setQuery(event.target.value)} className="text-[11px] flex-1 bg-transparent outline-none" style={{ color: INK }} placeholder="Cari kasus..." /></div>{filteredHistory.map((entry) => <div key={entry.id} className="flex items-center gap-2 rounded-lg px-2.5 py-2.5 transition-all hover:-translate-y-0.5 hover:shadow-sm" style={{ backgroundColor: MIST }}><button onClick={() => setSelectedHistory(entry)} className="flex flex-1 items-center gap-2.5 text-left min-w-0"><ClipboardList size={14} color={WORKFLOWS[entry.workflow].accent} /><div className="flex-1 min-w-0"><p className="text-[11px] font-medium truncate" style={{ color: INK }}>{entry.inputReference}</p><p className="text-[9.5px]" style={{ color: SLATE }}>{new Date(entry.timestamp).toLocaleString("id-ID")}</p></div></button><button aria-label="Hapus riwayat" onClick={() => void deleteHistoryEntry(entry.id)} className="rounded-md p-1.5 transition-all hover:bg-white active:scale-[0.95]"><Trash2 size={14} color={SLATE} /></button></div>)}{!filteredHistory.length && <p className="text-[11px]" style={{ color: SLATE }}>Belum ada riwayat yang cocok.</p>}<p className="text-[10px] flex items-center gap-1" style={{ color: SLATE }}><ShieldCheck size={11} /> Setiap kasus tercatat sebagai log audit.</p></>}</div>}
+    {settingsTab === "history" && <div className="space-y-3">{selectedHistory ? <HistoryDetail entry={selectedHistory} onBack={() => setSelectedHistory(null)} /> : <><div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ backgroundColor: MIST }}><Search size={13} color={SLATE} /><input value={query} onChange={(event) => setQuery(event.target.value)} className="text-[11px] flex-1 bg-transparent outline-none" style={{ color: INK }} placeholder="Cari kasus..." /></div>{filteredHistory.map((entry) => <div key={entry.id} className="flex items-center gap-2 rounded-lg px-2.5 py-2.5 transition-all hover:-translate-y-0.5 hover:shadow-sm" style={{ backgroundColor: MIST }}><button onClick={() => setSelectedHistory(entry)} className="flex flex-1 items-center gap-2.5 text-left min-w-0"><ClipboardList size={14} color={AUDIT_WORKFLOWS[entry.workflow].accent} /><div className="flex-1 min-w-0"><p className="text-[11px] font-medium truncate" style={{ color: INK }}>{entry.inputReference}</p><p className="text-[9.5px]" style={{ color: SLATE }}>{new Date(entry.timestamp).toLocaleString("id-ID")} · {AUDIT_WORKFLOWS[entry.workflow].label}</p></div></button><button aria-label="Hapus riwayat" onClick={() => void deleteHistoryEntry(entry.id)} className="rounded-md p-1.5 transition-all hover:bg-white active:scale-[0.95]"><Trash2 size={14} color={SLATE} /></button></div>)}{!filteredHistory.length && <p className="text-[11px]" style={{ color: SLATE }}>Belum ada riwayat yang cocok.</p>}<p className="text-[10px] flex items-center gap-1" style={{ color: SLATE }}><ShieldCheck size={11} /> Setiap kasus dan otomatisasi tercatat sebagai log audit.</p></>}</div>}
   </div>{adminModalOpen && <AdminKeyModal draft={adminAiDraft} setDraft={setAdminAiDraft} providers={adminProviders} users={adminUsers} reviews={claimReviews} library={claimAdminLibrary} userDraft={adminUserDraft} setUserDraft={setAdminUserDraft} status={adminAiStatus} onClose={() => setAdminModalOpen(false)} onSave={(validate) => void saveAdminKey(validate)} onReset={() => void resetAdminKey()} onAddUser={() => void addAdminUser()} onResetUser={() => void resetAdminUserPassword()} onDeleteUser={(username) => void removeAdminUser(username)} onReview={(resourceType, id, decision) => void reviewClaimItem(resourceType, id, decision)} onManage={manageClaimItem} />}</div>;
 }
 
@@ -1272,7 +1386,9 @@ function BackupModal({ templates, knowledgeText, knowledgeChunks, history, aiCon
 }
 
 function HistoryDetail({ entry, onBack }: { entry: AuditEntry; onBack: () => void }) {
-  return <div className="space-y-3"><button onClick={onBack} className="flex items-center gap-1 text-[11px] font-medium" style={{ color: SLATE }}><ArrowLeft size={12} /> Kembali</button><p className="text-[10px]" style={{ color: SLATE }}>{new Date(entry.timestamp).toLocaleString("id-ID")} · {WORKFLOWS[entry.workflow].label}</p><div className="rounded-lg p-3" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: SLATE }}>Input</p><p className="text-[12px] break-words" style={{ color: INK }}>{entry.inputReference}</p></div><div className="rounded-lg p-3" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: SLATE }}>Ringkasan Kasus</p><p className="text-[12px] leading-relaxed" style={{ color: INK }}>{entry.output.ringkasan}</p></div><div className="rounded-lg p-3" style={{ backgroundColor: "#fff", border: `1.5px solid ${WORKFLOWS[entry.workflow].accent}` }}><div className="flex items-center justify-between mb-1"><p className="text-[11px] font-semibold" style={{ color: SLATE }}>Jawaban Pending</p><button onClick={() => void navigator.clipboard?.writeText(entry.output.jawabanPending)} className="text-[10.5px] font-semibold" style={{ color: WORKFLOWS[entry.workflow].accent }}>Salin</button></div><p className="text-[12px] leading-relaxed" style={{ color: INK }}>{entry.output.jawabanPending}</p></div></div>;
+  const meta = AUDIT_WORKFLOWS[entry.workflow];
+  const costCorrection = entry.workflow === "cost-correction";
+  return <div className="space-y-3"><button onClick={onBack} className="flex items-center gap-1 text-[11px] font-medium" style={{ color: SLATE }}><ArrowLeft size={12} /> Kembali</button><p className="text-[10px]" style={{ color: SLATE }}>{new Date(entry.timestamp).toLocaleString("id-ID")} · {meta.label}</p><div className="rounded-lg p-3" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: SLATE }}>{costCorrection ? "SEP" : "Input"}</p><p className="text-[12px] break-words" style={{ color: INK }}>{entry.inputReference}</p></div><div className="rounded-lg p-3" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: SLATE }}>{costCorrection ? "Ringkasan Otomatisasi" : "Ringkasan Kasus"}</p><p className="text-[12px] leading-relaxed" style={{ color: INK }}>{entry.output.ringkasan}</p></div><div className="rounded-lg p-3" style={{ backgroundColor: "#fff", border: `1.5px solid ${meta.accent}` }}><div className="flex items-center justify-between mb-1"><p className="text-[11px] font-semibold" style={{ color: SLATE }}>{costCorrection ? "Pemetaan Biaya" : "Jawaban Pending"}</p><button onClick={() => void navigator.clipboard?.writeText(entry.output.jawabanPending)} className="text-[10.5px] font-semibold" style={{ color: meta.accent }}>Salin</button></div><p className="text-[12px] leading-relaxed" style={{ color: INK }}>{entry.output.jawabanPending}</p></div></div>;
 }
 
 function chunkMatches(chunk: KnowledgeChunk, query: string) {

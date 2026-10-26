@@ -7,6 +7,7 @@ import { getAdminProviderLabel, listClaimLibrary, manageClaimLibraryItem, normal
 import { appendAuditEntry, listAuditEntries, removeAuditEntry, replaceAuditEntries } from "../src/lib/audit/log";
 import { buildKnowledgeChunkUserMessage, formatKnowledgeContext, parseKnowledgeChunks, retrieveKnowledgeChunks } from "../src/lib/knowledge/chunks";
 import { getEklaimHomeUrl, openRegroupingSepForReview, parseSepInput, runRegroupingBatch, type RegroupingProgress } from "../src/lib/eklaim/regrouping";
+import { applyHospitalCosts, parseCostMappingResponse, parseHospitalCostText } from "../src/lib/eklaim/costCorrection";
 import { captureActiveTabPdf, readLocalFileUrl } from "../src/lib/pdf/parse";
 import { analyzeReadmisiTexts } from "../src/workflows/readmisi";
 import { buildClaimChallengeUserMessage, buildRevisionUserMessage, buildStandardUserMessage, CLAIM_CHALLENGE_SYSTEM_PROMPT, GENERATED_ANSWER_SCHEMA, parseClaimChallengeAssessment, parseGeneratedAnswer, REVISION_SYSTEM_PROMPT, STANDARD_SYSTEM_PROMPT } from "../src/workflows/standard";
@@ -140,6 +141,63 @@ describe("workflow guards", () => {
       seps: ["1709R0090626V007001", "1709R0090626V007002"],
       invalid: ["BAD"],
     });
+  });
+
+  it("parses and verifies the declared hospital cost total", () => {
+    const parsed = parseHospitalCostText(`No Deskripsi Layanan Total
+1 Kamar/Akomodasi Rp. 2,000,000
+2 Keperawatan Rp. 600,000
+3 konsultasi Rp. 370,000
+4 Laboratorium Rp. 359,000
+5 Obat Rp. 966,227
+6 Radiologi Rp. 515,000
+7 Tindakan Keperawatan & Konsultasi IGD Rp. 666,700
+Semua Total Biaya Pelayanan : Rp. 5,476,927`);
+
+    expect(parsed.lines).toHaveLength(7);
+    expect(parsed.lines[6]).toEqual({ id: 7, description: "Tindakan Keperawatan & Konsultasi IGD", amount: 666700 });
+    expect(parsed.calculatedTotal).toBe(5476927);
+    expect(parsed.declaredTotal).toBe(5476927);
+  });
+
+  it("rejects hospital costs when the details do not match the declared total", () => {
+    expect(() => parseHospitalCostText("1 Obat Rp. 10,000\nSemua Total Biaya Pelayanan : Rp. 9,000"))
+      .toThrow("tidak sama");
+  });
+
+  it("aggregates multiple nursing descriptions without trusting AI amounts", () => {
+    const parsed = parseHospitalCostText(`1 Keperawatan Rp. 600,000
+2 Tindakan Keperawatan & Konsultasi IGD Rp. 666,700
+3 Konsultasi Rp. 370,000
+Semua Total Biaya Pelayanan : Rp. 1,636,700`);
+    const plan = parseCostMappingResponse(JSON.stringify({ mappings: [
+      { lineId: 1, category: "nursing", reason: "Asuhan keperawatan" },
+      { lineId: 2, category: "nursing", reason: "Tindakan keperawatan" },
+      { lineId: 3, category: "consultation", reason: "Konsultasi dokter" },
+    ] }), parsed);
+
+    expect(plan.totals.nursing).toBe(1266700);
+    expect(plan.totals.consultation).toBe(370000);
+    expect(plan.total).toBe(1636700);
+  });
+
+  it("fills all e-Klaim cost fields from the validated plan", async () => {
+    const parsed = parseHospitalCostText("1 Obat Rp. 10,000\nSemua Total Biaya Pelayanan : Rp. 10,000");
+    const plan = parseCostMappingResponse('{"mappings":[{"lineId":1,"category":"drug","reason":"Obat"}]}', parsed);
+    const executeScript = vi.fn().mockResolvedValue([{ result: { ok: true, message: "OK", sep: "1709R0091026V001757" } }]);
+    vi.stubGlobal("chrome", {
+      tabs: { query: vi.fn().mockResolvedValue([{ id: 12, url: "http://172.16.0.5/E-Klaim/index.php?rand=abc" }]) },
+      permissions: { contains: vi.fn().mockResolvedValue(true) },
+      scripting: { executeScript },
+    });
+
+    const result = await applyHospitalCosts(plan);
+
+    expect(result).toEqual({ sep: "1709R0091026V001757", total: 10000, updatedFields: 1 });
+    expect(executeScript).toHaveBeenCalledTimes(2);
+    const values = executeScript.mock.calls[1][0].args[1] as Array<{ inputId: string; amount: number }>;
+    expect(values.find((item) => item.inputId === "drug_amt")?.amount).toBe(10000);
+    expect(values.find((item) => item.inputId === "nursing_amt")?.amount).toBe(0);
   });
 
   it("builds the stable e-Klaim home URL from a fresh-login URL", () => {

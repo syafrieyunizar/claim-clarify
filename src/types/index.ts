@@ -1,5 +1,7 @@
 ﻿export type WorkflowId = "standard" | "readmisi" | "template";
 
+export type AuditWorkflowId = WorkflowId | "cost-correction";
+
 export type ApiKeySource = "admin" | "personal";
 
 export interface AdminUserSession {
@@ -44,7 +46,7 @@ export interface ClaimChallengeAssessment {
 export interface AuditEntry {
   id: string;
   timestamp: string;
-  workflow: WorkflowId;
+  workflow: AuditWorkflowId;
   inputReference: string;
   output: GeneratedAnswer;
 }
