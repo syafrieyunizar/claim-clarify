@@ -184,9 +184,9 @@ export async function applyHospitalCosts(plan: HospitalCostPlan): Promise<ApplyH
     if (!granted) throw new Error("Izin mengakses halaman e-Klaim ditolak.");
   }
 
-  const values = EKLAIM_COST_FIELDS.map((field) => ({ inputId: field.inputId, amount: plan.totals[field.key] }));
-  await runCostStep(tab.id, "prepare", values, plan.total, 20_000);
-  const result = await runCostStep(tab.id, "apply", values, plan.total, 8_000);
+  const values = EKLAIM_COST_FIELDS.map((field) => ({ inputId: field.inputId, label: field.label, amount: plan.totals[field.key] }));
+  await runCostStep(tab.id, "prepare", values, 20_000);
+  const result = await runCostStep(tab.id, "apply", values, 8_000);
   return { sep: result.sep || "SEP aktif", total: plan.total, updatedFields: values.filter((item) => item.amount > 0).length };
 }
 
@@ -203,7 +203,9 @@ function parseRupiah(value: string) {
 
 type CostStepResult = { ok: boolean; retry?: boolean; message: string; sep?: string };
 
-async function runCostStep(tabId: number, action: "prepare" | "apply", values: Array<{ inputId: string; amount: number }>, total: number, timeout: number) {
+type EklaimCostValue = { inputId: string; label: string; amount: number };
+
+async function runCostStep(tabId: number, action: "prepare" | "apply", values: EklaimCostValue[], timeout: number) {
   const deadline = Date.now() + timeout;
   let lastMessage = "Form biaya e-Klaim belum siap.";
   while (Date.now() < deadline) {
@@ -213,7 +215,7 @@ async function runCostStep(tabId: number, action: "prepare" | "apply", values: A
         target: { tabId },
         world: "MAIN",
         func: executeEklaimCostStep,
-        args: [action, values, total],
+        args: [action, values],
       });
       result = execution?.result as CostStepResult | undefined;
     } catch (error) {
@@ -231,8 +233,7 @@ async function runCostStep(tabId: number, action: "prepare" | "apply", values: A
 
 export async function executeEklaimCostStep(
   action: "prepare" | "apply",
-  values: Array<{ inputId: string; amount: number }>,
-  total: number,
+  values: EklaimCostValue[],
 ): Promise<CostStepResult> {
   const documents: Document[] = [];
   const collectDocuments = (current: Document) => {
@@ -285,21 +286,23 @@ export async function executeEklaimCostStep(
   for (let index = 0; index < values.length; index += 1) {
     const input = inputs[index] as HTMLInputElement;
     const ownerWindow = input.ownerDocument.defaultView ?? window;
-    const setter = Object.getOwnPropertyDescriptor(ownerWindow.HTMLInputElement.prototype, "value")?.set;
-    const next = String(values[index].amount);
-    if (setter) setter.call(input, next);
-    else input.value = next;
+    const autoNumeric = (input as HTMLInputElement & { autonumeric?: { set(value: number): void; get(): string } }).autonumeric;
+    if (autoNumeric) autoNumeric.set(values[index].amount);
+    else input.value = String(values[index].amount);
     input.dispatchEvent(new ownerWindow.Event("input", { bubbles: true }));
     input.dispatchEvent(new ownerWindow.Event("change", { bubbles: true }));
     input.dispatchEvent(new ownerWindow.Event("blur", { bubbles: true }));
   }
   const mainDocument = inputs[0]?.ownerDocument ?? document;
-  const totalInput = mainDocument.getElementById("billing_amount") as HTMLInputElement | null;
-  const totalDisplay = mainDocument.getElementById("tdbilling_amount");
-  if (totalInput) totalInput.value = String(total);
-  if (totalDisplay) totalDisplay.textContent = total.toLocaleString("en-US");
-  const mismatched = inputs.some((input, index) => Number(input?.value.replace(/\D/g, "")) !== values[index].amount);
-  if (mismatched) return { ok: false, retry: false, message: "Sebagian nominal tidak dapat ditulis ke kolom e-Klaim." };
+  const ownerWindow = mainDocument.defaultView ?? window;
+  const recalculate = (ownerWindow as typeof ownerWindow & { recalc_billing?: () => void }).recalc_billing;
+  if (typeof recalculate === "function") recalculate();
+  const failedLabels = inputs.flatMap((input, index) => {
+    const resolvedInput = input as HTMLInputElement & { autonumeric?: { get(): string } };
+    const current = Number(String(resolvedInput.autonumeric ? resolvedInput.autonumeric.get() : resolvedInput.value).replace(/\D/g, ""));
+    return current === values[index].amount ? [] : [values[index].label];
+  });
+  if (failedLabels.length) return { ok: false, retry: false, message: `Kolom gagal diisi: ${failedLabels.join(", ")}.` };
   const sep = String((mainDocument.getElementById("no_sep") as HTMLInputElement | null)?.value || "").trim();
   return { ok: true, message: "Biaya sudah dipetakan ke form e-Klaim.", sep };
 }

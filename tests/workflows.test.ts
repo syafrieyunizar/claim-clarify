@@ -195,9 +195,11 @@ Semua Total Biaya Pelayanan : Rp. 1,636,700`);
 
     expect(result).toEqual({ sep: "1709R0091026V001757", total: 10000, updatedFields: 1 });
     expect(executeScript).toHaveBeenCalledTimes(2);
-    const values = executeScript.mock.calls[1][0].args[1] as Array<{ inputId: string; amount: number }>;
+    const values = executeScript.mock.calls[1][0].args[1] as Array<{ inputId: string; label: string; amount: number }>;
     expect(values.find((item) => item.inputId === "drug_amt")?.amount).toBe(10000);
     expect(values.find((item) => item.inputId === "nursing_amt")?.amount).toBe(0);
+    expect(values.every((item) => Number.isInteger(item.amount))).toBe(true);
+    expect(executeScript.mock.calls[1][0].args).toHaveLength(2);
   });
 
   it("builds the stable e-Klaim home URL from a fresh-login URL", () => {

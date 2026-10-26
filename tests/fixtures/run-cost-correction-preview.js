@@ -59,15 +59,27 @@ Semua Total Biaya Pelayanan : Rp. 5,476,927`;
   await page.getByText(/sudah diisikan pada 1709R0091026V001757/).waitFor();
 
   const injected = await page.evaluate(async () => {
-    document.body.innerHTML = '<input id="no_sep" value="1709R0091026V001757"><input type="hidden" id="billing_amount"><div id="tdbilling_amount"></div><button id="edit">Edit Ulang Klaim</button><main id="fields"></main>';
+    document.body.innerHTML = '<input id="no_sep" value="1709R0091026V001757"><input type="hidden" id="billing_amount" value="999"><div id="tdbilling_amount"></div><button id="edit">Edit Ulang Klaim</button><main id="fields"></main>';
     const { EKLAIM_COST_FIELDS, executeEklaimCostStep } = await import("/src/lib/eklaim/costCorrection.ts");
     const fields = document.getElementById("fields");
-    for (const field of EKLAIM_COST_FIELDS) fields.insertAdjacentHTML("beforeend", `<input id="${field.inputId}" disabled value="0">`);
+    for (const field of EKLAIM_COST_FIELDS) {
+      fields.insertAdjacentHTML("beforeend", `<input id="${field.inputId}" class="billing_group" disabled value="0">`);
+      const input = document.getElementById(field.inputId);
+      input.autonumeric = {
+        set(value) { input.value = Number(value).toLocaleString("en-US"); },
+        get() { return input.value.replace(/,/g, ""); },
+      };
+    }
+    window.recalc_billing = () => {
+      const total = [...document.querySelectorAll(".billing_group")].reduce((sum, input) => sum + Number(input.autonumeric.get()), 0);
+      document.getElementById("billing_amount").value = String(total);
+      document.getElementById("tdbilling_amount").textContent = total.toLocaleString("en-US");
+    };
     document.getElementById("edit").addEventListener("click", () => document.querySelectorAll('#fields input').forEach((input) => { input.disabled = false; }));
-    const values = EKLAIM_COST_FIELDS.map((field) => ({ inputId: field.inputId, amount: field.key === "nursing" ? 1266700 : 0 }));
-    const opening = await executeEklaimCostStep("prepare", values, 1266700);
-    const ready = await executeEklaimCostStep("prepare", values, 1266700);
-    const applied = await executeEklaimCostStep("apply", values, 1266700);
+    const values = EKLAIM_COST_FIELDS.map((field) => ({ inputId: field.inputId, label: field.label, amount: field.key === "nursing" ? 1266700 : 0 }));
+    const opening = await executeEklaimCostStep("prepare", values);
+    const ready = await executeEklaimCostStep("prepare", values);
+    const applied = await executeEklaimCostStep("apply", values);
     return {
       opening,
       ready,
@@ -76,7 +88,7 @@ Semua Total Biaya Pelayanan : Rp. 5,476,927`;
       total: document.getElementById("billing_amount").value,
     };
   });
-  if (injected.opening.ok || !injected.opening.retry || !injected.ready.ok || !injected.applied.ok || injected.nursing !== "1266700" || injected.total !== "1266700") {
+  if (injected.opening.ok || !injected.opening.retry || !injected.ready.ok || !injected.applied.ok || injected.nursing !== "1,266,700" || injected.total !== "1266700") {
     throw new Error(`Simulasi pengisian kolom e-Klaim gagal: ${JSON.stringify(injected)}`);
   }
   console.log(JSON.stringify(injected, null, 2));
