@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>VIP Cost Gap Preview</title>
+  <style>
+    body { margin: 16px; font-family: Arial, sans-serif; color: #111; }
+    table { width: 100%; border-collapse: collapse; }
+    td { border: 1px solid #999; padding: 5px; }
+    .hdr_grouper_result { text-align: center; font-weight: bold; background: #dff4df; }
+    #patient { padding: 8px; margin-bottom: 10px; background: #ddd; font-weight: bold; }
+    #extracted { white-space: pre-wrap; margin: 12px 0; padding: 10px; background: #f2f4f5; }
+  </style>
+</head>
+<body>
+  <div id="patient">221997 •• SALAHUDDIN, S.KEP •• LAKI-LAKI •• 15 MAR 1966</div>
+  <input id="no_sep" value="1709R0091026V001757">
+  <table>
+    <tr><td>Jenis Rawat</td><td>Inap</td><td>Kelas Hak</td><td>Kelas 1</td></tr>
+    <tr><td>Tanggal Rawat</td><td>Masuk : 18 Okt 2026 00:00</td><td>Pulang : 22 Okt 2026 00:00</td><td>Umur 60 tahun</td></tr>
+    <tr><td>Kelas Pelayanan</td><td>VIP</td><td>Lama (hari)</td><td>4</td></tr>
+    <tr><td>DPJP</td><td><select><option selected>DR. LINA HARYATI, Sp.JP</option></select></td></tr>
+  </table>
+  <pre id="extracted">Memuat...</pre>
+  <button id="prepare">Preview Screenshot</button>
+  <div id="dv_grouping_result_inacbg" class="grouper_result grouper_result_final">
+    <table>
+      <tbody>
+        <tr><td colspan="4" class="hdr_grouper_result">Hasil Grouping INACBG - Final</td></tr>
+        <tr><td>Info</td><td colspan="3">Petugas @ 31 Okt 2026 10:53 •• Kelas B</td></tr>
+        <tr><td>Jenis Rawat</td><td>Rawat Inap Kelas 1 (4 Hari)</td><td></td><td></td></tr>
+        <tr><td>Group</td><td>MASALAH BAGIAN PUNGGUNG/PINGGANG BELAKANG (RINGAN) M-4-17-I</td><td>Rp</td><td>5,150,100</td></tr>
+        <tr><td style="text-align:right">Total Klaim</td><td colspan="2">Rp</td><td>5,150,100</td></tr>
+        <tr><td style="text-align:right">Status</td><td colspan="2">final</td><td></td></tr>
+        <tr><td colspan="4">Tambahan Biaya Yang Dibayar Pasien Untuk Naik/Turun Di Atas Kelas 1</td></tr>
+        <tr><td>Tambahan Biaya</td><td>tidak berlaku ( Rp 5,064,172 &lt; Rp 5,150,100 )</td><td>= Rp</td><td id="td_add_payment_amt">0</td></tr>
+        <tr><td>Pembayar Selisih Biaya</td><td><input name="pembayar_selisih_biaya" type="radio" id="rad_pembayar_selisih_peserta" checked value="peserta"><label for="rad_pembayar_selisih_peserta">Peserta</label></td><td></td><td></td></tr>
+        <tr id="trdebug" style="display:none"><td colspan="4">input : 1 20/10/2026 23/10/2026</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <script type="module">
+    import { extractVipCostGapFromPage, prepareVipCostGapCapture } from "/src/lib/eklaim/vipCostGap.ts";
+    const result = extractVipCostGapFromPage();
+    document.getElementById("extracted").textContent = JSON.stringify(result, null, 2);
+    document.getElementById("prepare").addEventListener("click", async () => {
+      if (result.ok) await prepareVipCostGapCapture(result.data);
+    });
+  </script>
+</body>
+</html>

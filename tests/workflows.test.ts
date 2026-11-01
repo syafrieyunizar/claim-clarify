@@ -8,6 +8,7 @@ import { appendAuditEntry, listAuditEntries, removeAuditEntry, replaceAuditEntri
 import { buildKnowledgeChunkUserMessage, formatKnowledgeContext, parseKnowledgeChunks, retrieveKnowledgeChunks } from "../src/lib/knowledge/chunks";
 import { getEklaimHomeUrl, openRegroupingSepForReview, parseSepInput, runRegroupingBatch, type RegroupingProgress } from "../src/lib/eklaim/regrouping";
 import { applyHospitalCosts, parseCostMappingResponse, parseHospitalCostText } from "../src/lib/eklaim/costCorrection";
+import { formatVipCostGapText, readVipCostGap, type VipCostGapData } from "../src/lib/eklaim/vipCostGap";
 import { captureActiveTabPdf, readLocalFileUrl } from "../src/lib/pdf/parse";
 import { analyzeReadmisiTexts } from "../src/workflows/readmisi";
 import { buildClaimChallengeUserMessage, buildRevisionUserMessage, buildStandardUserMessage, CLAIM_CHALLENGE_SYSTEM_PROMPT, GENERATED_ANSWER_SCHEMA, parseClaimChallengeAssessment, parseGeneratedAnswer, REVISION_SYSTEM_PROMPT, STANDARD_SYSTEM_PROMPT } from "../src/workflows/standard";
@@ -200,6 +201,41 @@ Semua Total Biaya Pelayanan : Rp. 1,636,700`);
     expect(values.find((item) => item.inputId === "nursing_amt")?.amount).toBe(0);
     expect(values.every((item) => Number.isInteger(item.amount))).toBe(true);
     expect(executeScript.mock.calls[1][0].args).toHaveLength(2);
+  });
+
+  it("reads VIP cost-gap data from the active e-Klaim claim without SEP input", async () => {
+    const data: VipCostGapData = {
+      sep: "1709R0091026V001757",
+      medicalRecordNumber: "221997",
+      patientName: "Pasien Uji",
+      gender: "LAKI-LAKI",
+      birthDate: "15 MAR 1966",
+      admissionDate: "18 Okt 2026 00:00",
+      dischargeDate: "22 Okt 2026 00:00",
+      dpjp: "dr. Dokter Uji, Sp.JP",
+      insuranceClass: "Kelas 1",
+      serviceClass: "VIP",
+      careType: "Rawat Inap Kelas 1 (4 Hari)",
+      group: "M-4-17-I",
+      totalClaim: "5,150,100",
+      costGap: "0",
+      costGapNote: "tidak berlaku",
+      payer: "Peserta",
+      status: "final",
+    };
+    const executeScript = vi.fn().mockResolvedValue([{ result: { ok: true, data } }]);
+    vi.stubGlobal("chrome", {
+      tabs: { query: vi.fn().mockResolvedValue([{ id: 12, url: "http://172.16.0.5/E-Klaim/index.php?rand=abc" }]) },
+      permissions: { contains: vi.fn().mockResolvedValue(true) },
+      scripting: { executeScript },
+    });
+
+    await expect(readVipCostGap()).resolves.toEqual(data);
+    expect(executeScript).toHaveBeenCalledTimes(1);
+    expect(executeScript.mock.calls[0][0].args).toBeUndefined();
+    expect(formatVipCostGapText(data)).toContain("Tanggal masuk: 18 Okt 2026 00:00");
+    expect(formatVipCostGapText(data)).toContain("Kelas pelayanan: VIP");
+    expect(formatVipCostGapText(data)).toContain("Selisih biaya: Rp 0");
   });
 
   it("builds the stable e-Klaim home URL from a fresh-login URL", () => {

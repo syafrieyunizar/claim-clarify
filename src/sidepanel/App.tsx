@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowLeft, Bot, Calculator, Check, ChevronDown, ChevronRight, ClipboardList, Copy, Eye, EyeOff,
+  ArrowLeft, Bot, Calculator, Camera, Check, ChevronDown, ChevronRight, ClipboardList, Copy, Crown, Eye, EyeOff,
   DatabaseBackup, FileText, FolderOpen, Globe, History, KeyRound, Layers, Link2, Plus, RefreshCw,
   Pause, Pencil, Play, Scale, Search, Server, Settings, ShieldCheck, Stethoscope, Tag, Trash2, Upload, Download, Users, X, type LucideIcon,
 } from "lucide-react";
@@ -13,6 +13,7 @@ import { redactSensitiveData } from "../lib/privacy/redact";
 import { getLocal, removeLocal, setLocal } from "../lib/storage/local";
 import { openRegroupingSepForReview, parseSepInput, runRegroupingBatch, type RegroupingBatchResult, type RegroupingProgress } from "../lib/eklaim/regrouping";
 import { applyHospitalCosts, buildCostMappingUserMessage, COST_MAPPING_SCHEMA, COST_MAPPING_SYSTEM_PROMPT, EKLAIM_COST_FIELDS, formatRupiah, parseCostMappingResponse, parseHospitalCostText, type HospitalCostPlan } from "../lib/eklaim/costCorrection";
+import { copyVipCostGapScreenshot, formatVipCostGapText, readVipCostGap, type VipCostGapData } from "../lib/eklaim/vipCostGap";
 import { AMBER, AMBER_SOFT, INK, MIST, MIST_DARK, PAPER, PLUM, PLUM_SOFT, SLATE, TEAL, TEAL_SOFT } from "../theme";
 import type { AIConfig, AuditEntry, AuditWorkflowId, ClaimChallengeAssessment, GeneratedAnswer, KnowledgeChunk, Template, WorkflowId } from "../types";
 import { analyzeReadmisiTexts, hasMinimumReadmisiFiles } from "../workflows/readmisi";
@@ -37,6 +38,7 @@ const WORKFLOWS: Record<WorkflowId, WorkflowMeta> = {
 const AUDIT_WORKFLOWS: Record<AuditWorkflowId, WorkflowMeta> = {
   ...WORKFLOWS,
   "cost-correction": { label: "Perbaikan Biaya RS", accent: TEAL, soft: TEAL_SOFT, desc: "Pemetaan biaya ke tarif e-Klaim." },
+  "vip-cost-gap": { label: "Selisih Biaya (VIP)", accent: PLUM, soft: PLUM_SOFT, desc: "Data selisih biaya dari e-Klaim aktif." },
 };
 const VISIBLE_WORKFLOWS: WorkflowId[] = ["standard", "readmisi"];
 const DEFAULT_AI: AIConfig = { source: "admin", provider: "anthropic", endpoint: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-5", apiKey: "", adminSession: null };
@@ -89,7 +91,7 @@ function mergeTemplates(shared: Template[], local: Template[]) {
 
 export default function App() {
   const [view, setView] = useState<"home" | "settings">("home");
-  const [automation, setAutomation] = useState<"regrouping" | "cost-correction" | null>(null);
+  const [automation, setAutomation] = useState<"regrouping" | "cost-correction" | "vip-cost-gap" | null>(null);
   const [settingsTab, setSettingsTab] = useState<"ai" | "kb" | "template" | "history">("ai");
   const [workflow, setWorkflow] = useState<WorkflowId | null>(null);
   const [stage, setStage] = useState<"select" | "input" | "processing" | "question" | "generating" | "output">("select");
@@ -404,7 +406,7 @@ export default function App() {
             <div className="flex flex-col flex-1">
               {!automation && workflow && wf && <StepDots steps={steps} activeIndex={stageIndex} accent={wf.accent} />}
               <div className="flex-1 p-4 overflow-y-auto" style={{ minHeight: 420 }}>
-                {automation === "regrouping" ? <RegroupingStage onBack={() => setAutomation(null)} /> : automation === "cost-correction" ? <CostCorrectionStage aiConfig={aiConfig} onBack={() => setAutomation(null)} onAuditAdded={(entry) => setHistory((current) => [entry, ...current].slice(0, 200))} /> : <>
+                {automation === "regrouping" ? <RegroupingStage onBack={() => setAutomation(null)} /> : automation === "cost-correction" ? <CostCorrectionStage aiConfig={aiConfig} onBack={() => setAutomation(null)} onAuditAdded={(entry) => setHistory((current) => [entry, ...current].slice(0, 200))} /> : automation === "vip-cost-gap" ? <VipCostGapStage onBack={() => setAutomation(null)} onAuditAdded={(entry) => setHistory((current) => [entry, ...current].slice(0, 200))} /> : <>
                   {inputReference && ["question", "generating", "output"].includes(stage) && <ActiveFileLabel inputReference={inputReference} />}
                   {stage === "select" && <WorkflowSelect workflow={workflow} selectWorkflow={(id) => { setWorkflow(id); setStage("input"); }} selectAutomation={setAutomation} />}
                   {stage === "input" && workflow && wf && <InputStage workflow={workflow} wf={wf} inputMethod={inputMethod} setInputMethod={setInputMethod} files={files} setFiles={setFiles} linkUrl={linkUrl} setLinkUrl={setLinkUrl} resetFlow={resetFlow} processFiles={processFiles} />}
@@ -432,10 +434,11 @@ function StepDots({ steps, activeIndex, accent }: { steps: string[]; activeIndex
   return <div className="flex items-center gap-1.5 px-4 py-2.5" style={{ borderBottom: `1px solid ${MIST}` }}>{steps.map((step, i) => <div key={step} className="flex items-center gap-1.5 flex-1 min-w-0"><div className="flex items-center justify-center rounded-full text-[10px] font-semibold shrink-0" style={{ width: 18, height: 18, backgroundColor: i <= activeIndex ? accent : MIST, color: i <= activeIndex ? "#fff" : SLATE }}>{i < activeIndex ? <Check size={11} /> : i + 1}</div><span className="text-[10.5px] font-medium truncate" style={{ color: i <= activeIndex ? INK : SLATE }}>{step}</span>{i < steps.length - 1 && <div className="h-px flex-1" style={{ backgroundColor: i < activeIndex ? accent : MIST_DARK }} />}</div>)}</div>;
 }
 
-function WorkflowSelect({ workflow, selectWorkflow, selectAutomation }: { workflow: WorkflowId | null; selectWorkflow: (id: WorkflowId) => void; selectAutomation: (id: "regrouping" | "cost-correction") => void }) {
+function WorkflowSelect({ workflow, selectWorkflow, selectAutomation }: { workflow: WorkflowId | null; selectWorkflow: (id: WorkflowId) => void; selectAutomation: (id: "regrouping" | "cost-correction" | "vip-cost-gap") => void }) {
   const automations = [
     { id: "regrouping" as const, label: "Re-grouping", description: "Proses grouping ulang beberapa SEP secara berurutan.", icon: RefreshCw },
     { id: "cost-correction" as const, label: "Perbaikan Biaya", description: "Petakan rincian biaya RS ke kolom tarif e-Klaim.", icon: Calculator },
+    { id: "vip-cost-gap" as const, label: "Selisih Biaya (VIP)", description: "Salin data dan screenshot selisih biaya dari klaim aktif.", icon: Crown },
   ];
   return <div className="space-y-2.5"><p className="text-[11.5px] leading-relaxed" style={{ color: SLATE }}>Asisten pending klaim BPJS untuk membantu menyusun jawaban berdasarkan rekam medis dan knowledge yang tersimpan.</p><p className="text-[12px] font-semibold mb-1" style={{ color: SLATE }}>Pilih jenis kasus</p>{VISIBLE_WORKFLOWS.map((id) => <WorkflowCard key={id} id={id} active={workflow === id} onClick={selectWorkflow} />)}<div className="pt-2 space-y-2"><p className="text-[12px] font-semibold" style={{ color: SLATE }}>Pilih jenis otomatisasi</p>{automations.map((automation) => <button key={automation.id} onClick={() => selectAutomation(automation.id)} className="w-full min-h-11 text-left rounded-xl p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.99]" style={{ border: `1.5px solid ${MIST_DARK}`, backgroundColor: "#fff" }}><div className="flex items-center justify-between"><div className="flex items-center gap-2"><automation.icon size={15} color={TEAL} /><span className="font-semibold text-[13.5px]" style={{ color: INK }}>{automation.label}</span></div><ChevronRight size={16} color={SLATE} /></div><p className="text-[11.5px] mt-1" style={{ color: SLATE }}>{automation.description}</p></button>)}</div></div>;
 }
@@ -547,6 +550,85 @@ export function CostCorrectionStage({ aiConfig, onBack, onAuditAdded }: { aiConf
     {!plan ? <PanelButton onClick={() => void mapCosts()} icon={Calculator} className="w-full" disabled={busy || !parsedState.parsed}>Petakan Biaya dengan AI</PanelButton> : <div className="grid grid-cols-2 gap-2"><PanelButton variant="ghost" onClick={() => { setPlan(null); setStatus(""); }} disabled={busy}>Ubah Data</PanelButton><PanelButton onClick={() => setConfirmOpen(true)} icon={Calculator} disabled={busy}>Terapkan ke e-Klaim</PanelButton></div>}
     <p className="rounded-lg px-3 py-2 text-[10px] leading-relaxed" style={{ color: SLATE, backgroundColor: MIST }}>Penerapan akan mengganti seluruh 18 kolom tarif sesuai preview, termasuk mengisi nol pada kategori yang tidak tercantum. Ekstensi berhenti sebelum simpan atau finalisasi agar hasil dapat diperiksa.</p>
     {confirmOpen && plan && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"><div className="w-full max-w-sm rounded-xl bg-white p-4 shadow-xl"><div className="flex items-start justify-between gap-3"><div><p className="text-[14px] font-semibold" style={{ color: INK }}>Terapkan biaya ke e-Klaim?</p><p className="mt-1 text-[10.5px] leading-relaxed" style={{ color: SLATE }}>Total {formatRupiah(plan.total)} akan mengganti seluruh kolom tarif pada klaim yang sedang dibuka. Jika diperlukan, ekstensi membuka Edit Ulang Klaim terlebih dahulu.</p></div><button aria-label="Tutup konfirmasi" onClick={() => setConfirmOpen(false)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-slate-100"><X size={15} color={SLATE} /></button></div><div className="mt-4 grid grid-cols-2 gap-2"><PanelButton variant="ghost" onClick={() => setConfirmOpen(false)}>Batal</PanelButton><PanelButton onClick={() => void applyPlan()} accent={TEAL}>Terapkan Biaya</PanelButton></div></div></div>}
+  </div>;
+}
+
+export function VipCostGapStage({ onBack, onAuditAdded }: { onBack: () => void; onAuditAdded: (entry: AuditEntry) => void }) {
+  const [data, setData] = useState<VipCostGapData | null>(null);
+  const [busy, setBusy] = useState<"text" | "image" | "">("");
+  const [status, setStatus] = useState("");
+  const [statusError, setStatusError] = useState(false);
+  const audited = useRef(new Set<string>());
+
+  async function loadData() {
+    const next = await readVipCostGap();
+    setData(next);
+    const key = next.sep || `${next.medicalRecordNumber}:${next.admissionDate}`;
+    if (!audited.current.has(key)) {
+      const text = formatVipCostGapText(next);
+      const entry: AuditEntry = {
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        workflow: "vip-cost-gap",
+        inputReference: next.sep || next.medicalRecordNumber || "Klaim aktif",
+        output: {
+          ringkasan: `Data Selisih Biaya (VIP) dibaca dari klaim aktif untuk ${next.patientName || "pasien"}.`,
+          jawabanPending: text,
+          sources: ["e-Klaim aktif"],
+        },
+      };
+      await appendAuditEntry(entry);
+      onAuditAdded(entry);
+      audited.current.add(key);
+    }
+    return next;
+  }
+
+  async function copyTextData() {
+    setBusy("text");
+    setStatusError(false);
+    setStatus("Membaca data Selisih Biaya dari klaim aktif...");
+    try {
+      const next = await loadData();
+      await navigator.clipboard.writeText(formatVipCostGapText(next));
+      const missing = [["tanggal masuk", next.admissionDate], ["tanggal pulang", next.dischargeDate], ["DPJP", next.dpjp]].filter(([, value]) => !value).map(([label]) => label);
+      setStatus(missing.length ? `Data disalin. Periksa kembali karena ${missing.join(", ")} tidak ditemukan di halaman.` : "Data Selisih Biaya berhasil disalin ke clipboard.");
+      setStatusError(Boolean(missing.length));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Data Selisih Biaya gagal disalin.");
+      setStatusError(true);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function copyScreenshot() {
+    setBusy("image");
+    setStatusError(false);
+    setStatus("Menyiapkan screenshot identitas dan hasil grouping...");
+    try {
+      const next = await loadData();
+      await copyVipCostGapScreenshot(next);
+      setStatus("Screenshot identitas dan hasil grouping berhasil disalin. Tempel langsung ke WhatsApp atau aplikasi lain.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Screenshot gagal disalin.");
+      setStatusError(true);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return <div className="space-y-3.5">
+    <button onClick={busy ? undefined : onBack} disabled={Boolean(busy)} className="flex min-h-11 items-center gap-1 text-[11px] font-medium disabled:opacity-50" style={{ color: SLATE }}><ArrowLeft size={12} /> Kembali</button>
+    <div className="rounded-lg px-3 py-2 flex items-center gap-2 text-[11.5px] font-semibold" style={{ backgroundColor: PLUM_SOFT, color: PLUM }}><Crown size={13} /> Selisih Biaya (VIP)</div>
+    <p className="text-[11px] leading-relaxed" style={{ color: SLATE }}>Buka detail klaim yang sudah menampilkan hasil Grouping INACBG. Ekstensi otomatis membaca klaim aktif tanpa input nomor SEP.</p>
+    <div className="grid grid-cols-1 gap-2">
+      <PanelButton onClick={() => void copyTextData()} icon={Copy} disabled={Boolean(busy)} accent={PLUM}>{busy === "text" ? "Membaca Data..." : "Salin Selisih Biaya"}</PanelButton>
+      <PanelButton variant="ghost" onClick={() => void copyScreenshot()} icon={Camera} disabled={Boolean(busy)}>{busy === "image" ? "Mengambil Screenshot..." : "Salin Screenshot"}</PanelButton>
+    </div>
+    {status && <p aria-live="polite" className="rounded-lg p-2.5 text-[10.5px] leading-relaxed" style={{ color: statusError ? "#93000a" : PLUM, backgroundColor: statusError ? "#ffdad6" : PLUM_SOFT }}>{status}</p>}
+    {data && <section className="overflow-hidden rounded-lg" style={{ border: `1px solid ${MIST_DARK}` }}><div className="flex items-center justify-between gap-2 px-3 py-2" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: INK }}>Data klaim aktif</p><span className="font-mono text-[9.5px]" style={{ color: SLATE }}>{data.sep || "Tanpa SEP"}</span></div><pre className="whitespace-pre-wrap break-words p-3 font-sans text-[10.5px] leading-relaxed" style={{ color: INK }}>{formatVipCostGapText(data)}</pre></section>}
+    <p className="rounded-lg px-3 py-2 text-[10px] leading-relaxed" style={{ color: SLATE, backgroundColor: MIST }}>Screenshot hanya memuat identitas pasien dan elemen Hasil Grouping INACBG. Gambar langsung masuk clipboard dan tidak disimpan atau dikirim ke server.</p>
   </div>;
 }
 
@@ -1388,7 +1470,9 @@ function BackupModal({ templates, knowledgeText, knowledgeChunks, history, aiCon
 function HistoryDetail({ entry, onBack }: { entry: AuditEntry; onBack: () => void }) {
   const meta = AUDIT_WORKFLOWS[entry.workflow];
   const costCorrection = entry.workflow === "cost-correction";
-  return <div className="space-y-3"><button onClick={onBack} className="flex items-center gap-1 text-[11px] font-medium" style={{ color: SLATE }}><ArrowLeft size={12} /> Kembali</button><p className="text-[10px]" style={{ color: SLATE }}>{new Date(entry.timestamp).toLocaleString("id-ID")} · {meta.label}</p><div className="rounded-lg p-3" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: SLATE }}>{costCorrection ? "SEP" : "Input"}</p><p className="text-[12px] break-words" style={{ color: INK }}>{entry.inputReference}</p></div><div className="rounded-lg p-3" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: SLATE }}>{costCorrection ? "Ringkasan Otomatisasi" : "Ringkasan Kasus"}</p><p className="text-[12px] leading-relaxed" style={{ color: INK }}>{entry.output.ringkasan}</p></div><div className="rounded-lg p-3" style={{ backgroundColor: "#fff", border: `1.5px solid ${meta.accent}` }}><div className="flex items-center justify-between mb-1"><p className="text-[11px] font-semibold" style={{ color: SLATE }}>{costCorrection ? "Pemetaan Biaya" : "Jawaban Pending"}</p><button onClick={() => void navigator.clipboard?.writeText(entry.output.jawabanPending)} className="text-[10.5px] font-semibold" style={{ color: meta.accent }}>Salin</button></div><p className="text-[12px] leading-relaxed" style={{ color: INK }}>{entry.output.jawabanPending}</p></div></div>;
+  const vipCostGap = entry.workflow === "vip-cost-gap";
+  const automation = costCorrection || vipCostGap;
+  return <div className="space-y-3"><button onClick={onBack} className="flex items-center gap-1 text-[11px] font-medium" style={{ color: SLATE }}><ArrowLeft size={12} /> Kembali</button><p className="text-[10px]" style={{ color: SLATE }}>{new Date(entry.timestamp).toLocaleString("id-ID")} · {meta.label}</p><div className="rounded-lg p-3" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: SLATE }}>{automation ? "SEP" : "Input"}</p><p className="text-[12px] break-words" style={{ color: INK }}>{entry.inputReference}</p></div><div className="rounded-lg p-3" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: SLATE }}>{automation ? "Ringkasan Otomatisasi" : "Ringkasan Kasus"}</p><p className="text-[12px] leading-relaxed" style={{ color: INK }}>{entry.output.ringkasan}</p></div><div className="rounded-lg p-3" style={{ backgroundColor: "#fff", border: `1.5px solid ${meta.accent}` }}><div className="flex items-center justify-between mb-1"><p className="text-[11px] font-semibold" style={{ color: SLATE }}>{costCorrection ? "Pemetaan Biaya" : vipCostGap ? "Data Selisih Biaya" : "Jawaban Pending"}</p><button onClick={() => void navigator.clipboard?.writeText(entry.output.jawabanPending)} className="text-[10.5px] font-semibold" style={{ color: meta.accent }}>Salin</button></div><p className="whitespace-pre-wrap text-[12px] leading-relaxed" style={{ color: INK }}>{entry.output.jawabanPending}</p></div></div>;
 }
 
 function chunkMatches(chunk: KnowledgeChunk, query: string) {

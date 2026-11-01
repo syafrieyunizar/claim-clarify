@@ -1,6 +1,6 @@
 ﻿export type WorkflowId = "standard" | "readmisi" | "template";
 
-export type AuditWorkflowId = WorkflowId | "cost-correction";
+export type AuditWorkflowId = WorkflowId | "cost-correction" | "vip-cost-gap";
 
 export type ApiKeySource = "admin" | "personal";
 
