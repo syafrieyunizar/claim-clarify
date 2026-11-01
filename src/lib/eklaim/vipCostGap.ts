@@ -71,26 +71,19 @@ export async function copyVipCostGapScreenshot(data: VipCostGapData): Promise<vo
 }
 
 export function formatVipCostGapText(data: VipCostGapData) {
-  const rupiah = (value: string) => /^rp\b/i.test(value.trim()) ? value.trim() : `Rp ${value.trim() || "-"}`;
+  const dateOnly = (value: string) => value.trim().replace(/\s+\d{1,2}:\d{2}(?::\d{2})?$/, "") || "-";
+  const amountOnly = (value: string) => value.trim().replace(/^Rp\.?\s*/i, "") || "-";
   return [
-    "Selisih Biaya (VIP)",
-    `Nama pasien: ${data.patientName || "-"}`,
-    `No. RM: ${data.medicalRecordNumber || "-"}`,
-    `No. SEP: ${data.sep || "-"}`,
-    `Jenis kelamin: ${data.gender || "-"}`,
-    `Tanggal lahir: ${data.birthDate || "-"}`,
-    `Tanggal masuk: ${data.admissionDate || "-"}`,
-    `Tanggal pulang: ${data.dischargeDate || "-"}`,
-    `DPJP: ${data.dpjp || "-"}`,
-    `Kelas hak: ${data.insuranceClass || "-"}`,
-    `Kelas pelayanan: ${data.serviceClass || "-"}`,
-    `Jenis rawat: ${data.careType || "-"}`,
+    `Tanggal Masuk : ${dateOnly(data.admissionDate)}`,
+    `Tanggal Keluar : ${dateOnly(data.dischargeDate)}`,
+    `Nomor SEP : ${data.sep || "-"}`,
+    `DPJP : ${data.dpjp || "-"}`,
+    `Nama : ${data.patientName || "-"}`,
+    `Nomor RM : ${data.medicalRecordNumber || "-"}`,
+    "",
     `Group INA-CBG: ${data.group || "-"}`,
-    `Total klaim: ${rupiah(data.totalClaim)}`,
-    `Selisih biaya: ${rupiah(data.costGap)}`,
-    `Keterangan: ${data.costGapNote || "-"}`,
-    `Pembayar selisih: ${data.payer || "-"}`,
-    `Status grouping: ${data.status || "-"}`,
+    `Perkiraan Biaya klaim : ${amountOnly(data.totalClaim)}`,
+    `Selisih Tarif : ${amountOnly(data.costGap)}`,
   ].join("\n");
 }
 

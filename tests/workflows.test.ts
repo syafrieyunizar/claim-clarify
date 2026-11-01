@@ -233,9 +233,16 @@ Semua Total Biaya Pelayanan : Rp. 1,636,700`);
     await expect(readVipCostGap()).resolves.toEqual(data);
     expect(executeScript).toHaveBeenCalledTimes(1);
     expect(executeScript.mock.calls[0][0].args).toBeUndefined();
-    expect(formatVipCostGapText(data)).toContain("Tanggal masuk: 18 Okt 2026 00:00");
-    expect(formatVipCostGapText(data)).toContain("Kelas pelayanan: VIP");
-    expect(formatVipCostGapText(data)).toContain("Selisih biaya: Rp 0");
+    expect(formatVipCostGapText(data)).toBe(`Tanggal Masuk : 18 Okt 2026
+Tanggal Keluar : 22 Okt 2026
+Nomor SEP : 1709R0091026V001757
+DPJP : dr. Dokter Uji, Sp.JP
+Nama : Pasien Uji
+Nomor RM : 221997
+
+Group INA-CBG: M-4-17-I
+Perkiraan Biaya klaim : 5,150,100
+Selisih Tarif : 0`);
   });
 
   it("builds the stable e-Klaim home URL from a fresh-login URL", () => {

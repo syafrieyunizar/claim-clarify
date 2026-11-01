@@ -624,11 +624,11 @@ export function VipCostGapStage({ onBack, onAuditAdded }: { onBack: () => void; 
     <p className="text-[11px] leading-relaxed" style={{ color: SLATE }}>Buka detail klaim yang sudah menampilkan hasil Grouping INACBG. Ekstensi otomatis membaca klaim aktif tanpa input nomor SEP.</p>
     <div className="grid grid-cols-1 gap-2">
       <PanelButton onClick={() => void copyTextData()} icon={Copy} disabled={Boolean(busy)} accent={PLUM}>{busy === "text" ? "Membaca Data..." : "Salin Selisih Biaya"}</PanelButton>
-      <PanelButton variant="ghost" onClick={() => void copyScreenshot()} icon={Camera} disabled={Boolean(busy)}>{busy === "image" ? "Mengambil Screenshot..." : "Salin Screenshot"}</PanelButton>
+      <PanelButton variant="ghost" onClick={() => void copyScreenshot()} icon={Camera} disabled={Boolean(busy)}>{busy === "image" ? "Mengambil Screenshot..." : "Salin Screenshot (Gambar)"}</PanelButton>
     </div>
     {status && <p aria-live="polite" className="rounded-lg p-2.5 text-[10.5px] leading-relaxed" style={{ color: statusError ? "#93000a" : PLUM, backgroundColor: statusError ? "#ffdad6" : PLUM_SOFT }}>{status}</p>}
     {data && <section className="overflow-hidden rounded-lg" style={{ border: `1px solid ${MIST_DARK}` }}><div className="flex items-center justify-between gap-2 px-3 py-2" style={{ backgroundColor: MIST }}><p className="text-[11px] font-semibold" style={{ color: INK }}>Data klaim aktif</p><span className="font-mono text-[9.5px]" style={{ color: SLATE }}>{data.sep || "Tanpa SEP"}</span></div><pre className="whitespace-pre-wrap break-words p-3 font-sans text-[10.5px] leading-relaxed" style={{ color: INK }}>{formatVipCostGapText(data)}</pre></section>}
-    <p className="rounded-lg px-3 py-2 text-[10px] leading-relaxed" style={{ color: SLATE, backgroundColor: MIST }}>Screenshot hanya memuat identitas pasien dan elemen Hasil Grouping INACBG. Gambar langsung masuk clipboard dan tidak disimpan atau dikirim ke server.</p>
+    <p className="rounded-lg px-3 py-2 text-[10px] leading-relaxed" style={{ color: SLATE, backgroundColor: MIST }}>Screenshot disalin sebagai gambar PNG, bukan teks. Tekan Ctrl+V untuk menempelkannya ke WhatsApp atau aplikasi lain. Gambar tidak disimpan atau dikirim ke server.</p>
   </div>;
 }
 
