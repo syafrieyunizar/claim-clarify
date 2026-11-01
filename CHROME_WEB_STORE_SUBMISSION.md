@@ -30,11 +30,11 @@ Izin storage digunakan untuk menyimpan konfigurasi AI dan API key pribadi di chr
 
 **activeTab justification**
 
-Izin activeTab digunakan hanya setelah tindakan pengguna pada fitur Tab Aktif untuk memproses PDF, atau pada fitur Selisih Biaya (VIP) untuk membaca dan mengambil screenshot area hasil grouping e-Klaim yang sedang aktif. Extension tidak memantau tab secara terus-menerus.
+Izin activeTab digunakan hanya setelah tindakan pengguna pada fitur Tab Aktif untuk memperoleh akses sementara ke PDF yang sedang ditampilkan dan memproses teksnya. Extension tidak memantau tab secara terus-menerus.
 
 **tabs justification**
 
-Izin tabs digunakan untuk mengetahui URL tab aktif, memastikan tab tersebut merupakan PDF atau halaman e-Klaim yang dipilih pengguna, mengoordinasikan pemuatan ulang sementara ketika Chrome menyerahkan stream PDF kepada extension, mengembalikan tab ke halaman awal e-Klaim selama otomatisasi Re-grouping, dan menangkap area hasil grouping setelah pengguna menekan Salin Screenshot. Izin ini tidak digunakan untuk mengumpulkan riwayat browsing.
+Izin tabs digunakan untuk mengetahui URL tab aktif, memastikan tab tersebut merupakan PDF atau halaman e-Klaim yang dipilih pengguna, mengoordinasikan pemuatan ulang sementara ketika Chrome menyerahkan stream PDF kepada extension, dan mengembalikan tab ke halaman awal e-Klaim selama otomatisasi Re-grouping. Izin ini tidak digunakan untuk mengumpulkan riwayat browsing.
 
 **scripting justification**
 

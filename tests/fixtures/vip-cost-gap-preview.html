@@ -40,11 +40,19 @@
     </table>
   </div>
   <script type="module">
-    import { extractVipCostGapFromPage, prepareVipCostGapCapture } from "/src/lib/eklaim/vipCostGap.ts";
+    import { extractVipCostGapFromPage, renderVipCostGapScreenshot } from "/src/lib/eklaim/vipCostGap.ts";
     const result = extractVipCostGapFromPage();
     document.getElementById("extracted").textContent = JSON.stringify(result, null, 2);
     document.getElementById("prepare").addEventListener("click", async () => {
-      if (result.ok) await prepareVipCostGapCapture(result.data);
+      if (!result.ok) return;
+      const screenshot = await renderVipCostGapScreenshot(result.data);
+      if (screenshot.ok) {
+        const image = document.createElement("img");
+        image.id = "rendered-screenshot";
+        image.src = screenshot.data;
+        image.style.maxWidth = "100%";
+        document.body.prepend(image);
+      }
     });
   </script>
 </body>

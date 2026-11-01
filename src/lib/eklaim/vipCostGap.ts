@@ -20,15 +20,6 @@ export interface VipCostGapData {
 
 type InjectedResult<T> = { ok: true; data: T } | { ok: false; message: string };
 
-type CaptureBounds = {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  viewportWidth: number;
-  viewportHeight: number;
-};
-
 export async function readVipCostGap(): Promise<VipCostGapData> {
   const tab = await getActiveEklaimTab();
   const [execution] = await chrome.scripting.executeScript({
@@ -50,24 +41,15 @@ export async function copyVipCostGapScreenshot(data: VipCostGapData): Promise<vo
   const [execution] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     world: "MAIN",
-    func: prepareVipCostGapCapture,
+    func: renderVipCostGapScreenshot,
     args: [data],
   });
-  const result = execution?.result as InjectedResult<CaptureBounds> | undefined;
-  if (!result) throw new Error("Area screenshot tidak dapat disiapkan.");
+  const result = execution?.result as InjectedResult<string> | undefined;
+  if (!result) throw new Error("Screenshot tidak dapat dibuat dari halaman e-Klaim.");
   if (!result.ok) throw new Error(result.message);
-
-  try {
-    const imageUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
-    const blob = await cropScreenshot(imageUrl, result.data);
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-  } finally {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: "MAIN",
-      func: cleanupVipCostGapCapture,
-    }).catch(() => undefined);
-  }
+  const blob = await fetch(result.data).then((response) => response.blob());
+  if (blob.type !== "image/png") throw new Error("Format screenshot bukan PNG.");
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
 }
 
 export function formatVipCostGapText(data: VipCostGapData) {
@@ -101,27 +83,6 @@ async function getActiveEklaimTab(): Promise<chrome.tabs.Tab & { id: number; url
     if (!granted) throw new Error("Izin mengakses halaman e-Klaim ditolak.");
   }
   return tab as chrome.tabs.Tab & { id: number; url: string };
-}
-
-async function cropScreenshot(imageUrl: string, bounds: CaptureBounds) {
-  const image = new Image();
-  image.src = imageUrl;
-  await image.decode();
-  const scaleX = image.naturalWidth / bounds.viewportWidth;
-  const scaleY = image.naturalHeight / bounds.viewportHeight;
-  const sourceX = Math.max(0, Math.round(bounds.left * scaleX));
-  const sourceY = Math.max(0, Math.round(bounds.top * scaleY));
-  const sourceWidth = Math.min(image.naturalWidth - sourceX, Math.max(1, Math.round(bounds.width * scaleX)));
-  const sourceHeight = Math.min(image.naturalHeight - sourceY, Math.max(1, Math.round(bounds.height * scaleY)));
-  const canvas = document.createElement("canvas");
-  canvas.width = sourceWidth;
-  canvas.height = sourceHeight;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Screenshot tidak dapat diproses.");
-  context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!blob) throw new Error("Screenshot tidak dapat dibuat.");
-  return blob;
 }
 
 export function extractVipCostGapFromPage(): InjectedResult<VipCostGapData> {
@@ -190,15 +151,13 @@ export function extractVipCostGapFromPage(): InjectedResult<VipCostGapData> {
   } };
 }
 
-export async function prepareVipCostGapCapture(data: VipCostGapData): Promise<InjectedResult<CaptureBounds>> {
-  document.getElementById("claim-clarify-vip-capture")?.remove();
+export async function renderVipCostGapScreenshot(data: VipCostGapData): Promise<InjectedResult<string>> {
   const target = document.getElementById("dv_grouping_result_inacbg") as HTMLElement | null;
   if (!target) return { ok: false, message: "Elemen hasil Grouping INACBG tidak ditemukan untuk screenshot." };
 
-  const overlay = document.createElement("div");
-  overlay.id = "claim-clarify-vip-capture";
-  const targetWidth = Math.min(Math.max(target.getBoundingClientRect().width, 760), window.innerWidth - 24);
-  overlay.style.cssText = `position:fixed;left:12px;top:12px;width:${targetWidth}px;box-sizing:border-box;background:#fff;padding:12px;z-index:2147483647;box-shadow:0 0 0 2px #176f67;pointer-events:none;color:#111;`;
+  const capture = document.createElement("div");
+  const targetWidth = Math.min(Math.max(target.getBoundingClientRect().width, 760), 1400);
+  capture.style.cssText = `position:absolute;left:-10000px;top:0;width:${targetWidth}px;box-sizing:border-box;background:#fff;padding:12px;color:#111;`;
 
   const identity = document.createElement("div");
   identity.style.cssText = "margin:0 0 8px;padding:10px 12px;background:#f2f4f5;border:1px solid #c8d1d4;font:bold 14px Arial,sans-serif;line-height:1.45;";
@@ -211,18 +170,47 @@ export async function prepareVipCostGapCapture(data: VipCostGapData): Promise<In
   const clone = target.cloneNode(true) as HTMLElement;
   clone.removeAttribute("id");
   clone.style.cssText += ";position:static!important;width:100%!important;margin:0!important;";
-  clone.querySelectorAll("#trdebug, input[type=button]").forEach((element) => element.remove());
-  overlay.append(identity, clone);
-  document.body.appendChild(overlay);
+  clone.querySelectorAll("#trdebug, input[type=button], img").forEach((element) => element.remove());
+  capture.append(identity, clone);
+  document.body.appendChild(capture);
 
-  const scale = Math.min(1, (window.innerWidth - 24) / overlay.scrollWidth, (window.innerHeight - 24) / overlay.scrollHeight);
-  overlay.style.transformOrigin = "top left";
-  overlay.style.transform = `scale(${scale})`;
-  await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-  const rect = overlay.getBoundingClientRect();
-  return { ok: true, data: { left: rect.left, top: rect.top, width: rect.width, height: rect.height, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight } };
-}
-
-export function cleanupVipCostGapCapture() {
-  document.getElementById("claim-clarify-vip-capture")?.remove();
+  try {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const styleProperties = [
+      "background-color", "border", "border-collapse", "border-spacing", "border-radius", "box-sizing", "color",
+      "display", "font-family", "font-size", "font-style", "font-weight", "height", "line-height", "margin",
+      "padding", "table-layout", "text-align", "text-decoration", "vertical-align", "white-space", "width",
+    ];
+    for (const element of [capture, ...Array.from(capture.querySelectorAll<HTMLElement>("*"))]) {
+      const computed = getComputedStyle(element);
+      const existing = element.getAttribute("style") || "";
+      const inline = styleProperties.map((property) => `${property}:${computed.getPropertyValue(property)};`).join("");
+      element.setAttribute("style", `${existing};${inline}`);
+    }
+    capture.style.position = "static";
+    capture.style.left = "0";
+    capture.style.top = "0";
+    capture.style.margin = "0";
+    capture.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+    const width = Math.ceil(capture.scrollWidth);
+    const height = Math.ceil(capture.scrollHeight);
+    const html = new XMLSerializer().serializeToString(capture);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject width="100%" height="100%">${html}</foreignObject></svg>`;
+    const image = new Image();
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    await image.decode();
+    const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(width * pixelRatio);
+    canvas.height = Math.ceil(height * pixelRatio);
+    const context = canvas.getContext("2d");
+    if (!context) return { ok: false, message: "Canvas screenshot tidak tersedia." };
+    context.scale(pixelRatio, pixelRatio);
+    context.drawImage(image, 0, 0, width, height);
+    return { ok: true, data: canvas.toDataURL("image/png") };
+  } catch {
+    return { ok: false, message: "Elemen hasil grouping gagal dirender menjadi gambar PNG." };
+  } finally {
+    capture.remove();
+  }
 }
