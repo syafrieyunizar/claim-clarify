@@ -33,6 +33,13 @@ export async function readVipCostGap(): Promise<VipCostGapData> {
   return result.data;
 }
 
+export async function getVipCostGapForCopy(displayedData: VipCostGapData | null): Promise<{ data: VipCostGapData; fromDisplayed: boolean }> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (isEklaimTab(tab)) return { data: await readVipCostGap(), fromDisplayed: false };
+  if (!displayedData) throw new Error("Buka detail klaim di e-Klaim untuk membaca data terlebih dahulu.");
+  return { data: displayedData, fromDisplayed: true };
+}
+
 export async function copyVipCostGapScreenshot(data: VipCostGapData): Promise<void> {
   if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
     throw new Error("Browser ini belum mendukung salin screenshot ke clipboard.");
@@ -74,7 +81,7 @@ async function getActiveEklaimTab(): Promise<chrome.tabs.Tab & { id: number; url
     throw new Error("Selisih Biaya hanya tersedia di Chrome Extension.");
   }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || tab.id === undefined || !tab.url || !/^https?:/i.test(tab.url) || !/\/e-klaim(?:\/|$)/i.test(new URL(tab.url).pathname)) {
+  if (!isEklaimTab(tab)) {
     throw new Error("Buka detail klaim pada tab e-Klaim terlebih dahulu.");
   }
   const permission = { origins: [`${new URL(tab.url).origin}/*`] };
@@ -83,6 +90,10 @@ async function getActiveEklaimTab(): Promise<chrome.tabs.Tab & { id: number; url
     if (!granted) throw new Error("Izin mengakses halaman e-Klaim ditolak.");
   }
   return tab as chrome.tabs.Tab & { id: number; url: string };
+}
+
+function isEklaimTab(tab: chrome.tabs.Tab | undefined): tab is chrome.tabs.Tab & { id: number; url: string } {
+  return Boolean(tab?.id !== undefined && tab.url && /^https?:/i.test(tab.url) && /\/e-klaim(?:\/|$)/i.test(new URL(tab.url).pathname));
 }
 
 export function extractVipCostGapFromPage(): InjectedResult<VipCostGapData> {

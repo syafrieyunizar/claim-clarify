@@ -8,7 +8,7 @@ import { appendAuditEntry, listAuditEntries, removeAuditEntry, replaceAuditEntri
 import { buildKnowledgeChunkUserMessage, formatKnowledgeContext, parseKnowledgeChunks, retrieveKnowledgeChunks } from "../src/lib/knowledge/chunks";
 import { getEklaimHomeUrl, openRegroupingSepForReview, parseSepInput, runRegroupingBatch, type RegroupingProgress } from "../src/lib/eklaim/regrouping";
 import { applyHospitalCosts, parseCostMappingResponse, parseHospitalCostText } from "../src/lib/eklaim/costCorrection";
-import { formatVipCostGapText, readVipCostGap, type VipCostGapData } from "../src/lib/eklaim/vipCostGap";
+import { formatVipCostGapText, getVipCostGapForCopy, readVipCostGap, type VipCostGapData } from "../src/lib/eklaim/vipCostGap";
 import { captureActiveTabPdf, readLocalFileUrl } from "../src/lib/pdf/parse";
 import { analyzeReadmisiTexts } from "../src/workflows/readmisi";
 import { buildClaimChallengeUserMessage, buildRevisionUserMessage, buildStandardUserMessage, CLAIM_CHALLENGE_SYSTEM_PROMPT, GENERATED_ANSWER_SCHEMA, parseClaimChallengeAssessment, parseGeneratedAnswer, REVISION_SYSTEM_PROMPT, STANDARD_SYSTEM_PROMPT } from "../src/workflows/standard";
@@ -243,6 +243,24 @@ Nomor RM : 221997
 Group INA-CBG: M-4-17-I
 Perkiraan Biaya klaim : 5,150,100
 Selisih Tarif : 0`);
+    await expect(getVipCostGapForCopy(null)).resolves.toEqual({ data, fromDisplayed: false });
+    expect(executeScript).toHaveBeenCalledTimes(2);
+  });
+
+  it("copies displayed VIP data when the active tab is not e-Klaim", async () => {
+    const displayed = { sep: "1709R0091026V001757", costGap: "1,000" } as VipCostGapData;
+    const executeScript = vi.fn();
+    const request = vi.fn();
+    vi.stubGlobal("chrome", {
+      tabs: { query: vi.fn().mockResolvedValue([{ id: 13, url: "https://example.com/" }]) },
+      permissions: { request },
+      scripting: { executeScript },
+    });
+
+    await expect(getVipCostGapForCopy(displayed)).resolves.toEqual({ data: displayed, fromDisplayed: true });
+    await expect(getVipCostGapForCopy(null)).rejects.toThrow("Buka detail klaim di e-Klaim");
+    expect(executeScript).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("builds the stable e-Klaim home URL from a fresh-login URL", () => {

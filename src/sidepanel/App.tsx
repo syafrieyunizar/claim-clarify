@@ -13,7 +13,7 @@ import { redactSensitiveData } from "../lib/privacy/redact";
 import { getLocal, removeLocal, setLocal } from "../lib/storage/local";
 import { openRegroupingSepForReview, parseSepInput, runRegroupingBatch, type RegroupingBatchResult, type RegroupingProgress } from "../lib/eklaim/regrouping";
 import { applyHospitalCosts, buildCostMappingUserMessage, COST_MAPPING_SCHEMA, COST_MAPPING_SYSTEM_PROMPT, EKLAIM_COST_FIELDS, formatRupiah, parseCostMappingResponse, parseHospitalCostText, type HospitalCostPlan } from "../lib/eklaim/costCorrection";
-import { copyVipCostGapScreenshot, formatVipCostGapText, readVipCostGap, type VipCostGapData } from "../lib/eklaim/vipCostGap";
+import { copyVipCostGapScreenshot, formatVipCostGapText, getVipCostGapForCopy, readVipCostGap, type VipCostGapData } from "../lib/eklaim/vipCostGap";
 import { AMBER, AMBER_SOFT, INK, MIST, MIST_DARK, PAPER, PLUM, PLUM_SOFT, SLATE, TEAL, TEAL_SOFT } from "../theme";
 import type { AIConfig, AuditEntry, AuditWorkflowId, ClaimChallengeAssessment, GeneratedAnswer, KnowledgeChunk, Template, WorkflowId } from "../types";
 import { analyzeReadmisiTexts, hasMinimumReadmisiFiles } from "../workflows/readmisi";
@@ -560,8 +560,8 @@ export function VipCostGapStage({ onBack, onAuditAdded }: { onBack: () => void; 
   const [statusError, setStatusError] = useState(false);
   const audited = useRef(new Set<string>());
 
-  async function loadData() {
-    const next = await readVipCostGap();
+  async function loadData(next?: VipCostGapData) {
+    next ??= await readVipCostGap();
     setData(next);
     const key = next.sep || `${next.medicalRecordNumber}:${next.admissionDate}`;
     if (!audited.current.has(key)) {
@@ -587,12 +587,13 @@ export function VipCostGapStage({ onBack, onAuditAdded }: { onBack: () => void; 
   async function copyTextData() {
     setBusy("text");
     setStatusError(false);
-    setStatus("Membaca data Selisih Biaya dari klaim aktif...");
+    setStatus("Menyiapkan data Selisih Biaya...");
     try {
-      const next = await loadData();
+      const { data: selected, fromDisplayed } = await getVipCostGapForCopy(data);
+      const next = fromDisplayed ? selected : await loadData(selected);
       await navigator.clipboard.writeText(formatVipCostGapText(next));
       const missing = [["tanggal masuk", next.admissionDate], ["tanggal pulang", next.dischargeDate], ["DPJP", next.dpjp]].filter(([, value]) => !value).map(([label]) => label);
-      setStatus(missing.length ? `Data disalin. Periksa kembali karena ${missing.join(", ")} tidak ditemukan di halaman.` : "Data Selisih Biaya berhasil disalin ke clipboard.");
+      setStatus(missing.length ? `Data disalin. Periksa kembali karena ${missing.join(", ")} tidak tersedia di data.` : fromDisplayed ? "Data yang tampil berhasil disalin ke clipboard." : "Data Selisih Biaya berhasil disalin ke clipboard.");
       setStatusError(Boolean(missing.length));
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Data Selisih Biaya gagal disalin.");
